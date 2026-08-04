@@ -1,0 +1,4 @@
+# 复制为 worker/.dev.vars 供本地 wrangler dev 使用（勿提交）
+XFYUN_APP_ID=your_app_id
+XFYUN_API_KEY=your_api_key
+XFYUN_API_SECRET=your_api_secret

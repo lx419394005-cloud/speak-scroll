@@ -1,0 +1,42 @@
+# 推送到 main 后自动构建前端并部署到 Cloudflare Workers
+name: Deploy Speak Scroll
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            client/package-lock.json
+            worker/package-lock.json
+
+      - name: Install root
+        run: npm ci
+
+      - name: Install client
+        run: npm ci --prefix client
+
+      - name: Install worker
+        run: npm ci --prefix worker --legacy-peer-deps
+
+      - name: Build client
+        run: npm run build --prefix client
+
+      - name: Deploy Worker
+        working-directory: worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler deploy --name speak-scroll

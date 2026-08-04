@@ -1,0 +1,19 @@
+{
+  "name": "speak-scroll-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787 --name speak-scroll",
+    "deploy": "wrangler deploy --name speak-scroll",
+    "db:local": "wrangler d1 execute speak-scroll --local --file=./migrations/0001_init.sql",
+    "db:remote": "wrangler d1 execute speak-scroll --remote --file=./migrations/0001_init.sql",
+    "db:create": "wrangler d1 create speak-scroll",
+    "secret:list": "wrangler secret list --name speak-scroll",
+    "types": "wrangler types"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250726.0",
+    "typescript": "^5.9.2",
+    "wrangler": "^4.28.0"
+  }
+}

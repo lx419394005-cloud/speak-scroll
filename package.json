@@ -1,0 +1,18 @@
+{
+  "name": "english-speaker",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -n server,worker,client -c cyan,yellow,magenta \"npm run dev --prefix server\" \"npm run dev --prefix worker\" \"npm run dev --prefix client\"",
+    "dev:server": "npm run dev --prefix server",
+    "dev:worker": "npm run dev --prefix worker",
+    "dev:client": "npm run dev --prefix client",
+    "build": "npm run build --prefix client",
+    "deploy": "npm run build --prefix client && npm run deploy --prefix worker",
+    "deploy:cf": "bash ./scripts/cf-deploy.sh",
+    "deploy:leaderboard": "npm run deploy --prefix worker"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.4"
+  }
+}
