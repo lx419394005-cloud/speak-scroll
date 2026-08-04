@@ -28,6 +28,17 @@
 2. **Cloud Agent** 对着这个仓库改代码、提 PR；合并进 `main` 就会自动部署
 3. **Cloudflare** 用 Actions（本仓库已带 `.github/workflows/deploy.yml`）或 Dashboard 的 Workers Git 集成
 
+### Cloudflare Dashboard（连 GitHub）填法
+
+| 项 | 建议值 |
+|----|--------|
+| Root directory | 仓库根（留空） |
+| Install command | `npm ci --prefix client && npm ci --prefix worker --legacy-peer-deps` |
+| Build command | `npm run build --prefix client` |
+| Deploy command | `npx wrangler deploy --name speak-scroll`（目录选 `worker`） |
+
+若 Cloudflare 只跑 Build、且默认 `omit=dev`，client 里构建工具已放在 `dependencies`，避免再出现 `tsc: not found`。
+
 ### GitHub Secrets（仓库 Settings → Secrets）
 
 | Secret | 说明 |
