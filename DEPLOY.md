@@ -30,14 +30,15 @@
 
 ### Cloudflare Dashboard（连 GitHub）填法
 
+Cloudflare 会先在**仓库根**跑 `npm clean-install`（只装根依赖），**不会**自动装 `client/`。所以 Build 必须自己装 client：
+
 | 项 | 建议值 |
 |----|--------|
-| Root directory | 仓库根（留空） |
-| Install command | `npm ci --prefix client && npm ci --prefix worker --legacy-peer-deps` |
-| Build command | `npm run build --prefix client` |
-| Deploy command | `npx wrangler deploy --name speak-scroll`（目录选 `worker`） |
+| Root directory | 留空（仓库根） |
+| Build command | `npm run build` |
+| Deploy command | `npm ci --prefix worker --legacy-peer-deps && npm run deploy --prefix worker` |
 
-若 Cloudflare 只跑 Build、且默认 `omit=dev`，client 里构建工具已放在 `dependencies`，避免再出现 `tsc: not found`。
+`npm run build` = `npm ci --prefix client` + 前端构建。不要只填 `npm run build --prefix client`。
 
 ### GitHub Secrets（仓库 Settings → Secrets）
 

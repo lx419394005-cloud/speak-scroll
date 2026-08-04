@@ -11,7 +11,7 @@
     "secret:list": "wrangler secret list --name speak-scroll",
     "types": "wrangler types"
   },
-  "devDependencies": {
+  "dependencies": {
     "@cloudflare/workers-types": "^4.20250726.0",
     "typescript": "^5.9.2",
     "wrangler": "^4.28.0"

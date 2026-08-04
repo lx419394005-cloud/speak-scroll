@@ -7,8 +7,8 @@
     "dev:server": "npm run dev --prefix server",
     "dev:worker": "npm run dev --prefix worker",
     "dev:client": "npm run dev --prefix client",
-    "build": "npm run build --prefix client",
-    "deploy": "npm run build --prefix client && npm run deploy --prefix worker",
+    "build": "npm ci --prefix client && npm run build --prefix client",
+    "deploy": "npm run build && npm run deploy --prefix worker",
     "deploy:cf": "bash ./scripts/cf-deploy.sh",
     "deploy:leaderboard": "npm run deploy --prefix worker"
   },
