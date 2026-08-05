@@ -6,7 +6,6 @@ import {
   MIN_RECORD_MS,
   PASS_PAUSE_MS,
   SILENCE_END_MS,
-  WORDS,
   type WordCard,
 } from '../data/words'
 import { createGameMicRecorder, type MicRecorder, wantsMockMic } from '../ise/audio'
@@ -70,6 +69,10 @@ function preloadImages(urls: string[]) {
     const img = new Image()
     img.decoding = 'async'
     img.src = url
+    // 提前 decode，翻卡时少卡一帧
+    if (typeof img.decode === 'function') {
+      void img.decode().catch(() => null)
+    }
   }
 }
 
@@ -231,9 +234,9 @@ export function Game() {
   }, [])
 
   useEffect(() => {
-    // 开局前预热全部词图，减少 Cloudflare 上偶发空白
-    preloadImages(WORDS.map((w) => w.image))
-  }, [])
+    // 只预热当前关词图（约 10 张），避免一进页拖 30 张
+    preloadImages(wordsForLevel(level).map((w) => w.image))
+  }, [level])
 
   useEffect(() => {
     if (phase !== 'playing' || deck.length === 0) return
@@ -847,9 +850,12 @@ export function Game() {
                   key={current.image}
                   src={current.image}
                   alt="guess the word"
+                  width={512}
+                  height={512}
                   draggable={false}
                   loading="eager"
                   decoding="async"
+                  fetchPriority="high"
                   onError={(e) => {
                     const el = e.currentTarget
                     const retries = Number(el.dataset.retry || '0')

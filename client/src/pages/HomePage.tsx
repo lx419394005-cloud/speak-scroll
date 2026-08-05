@@ -32,6 +32,17 @@ export function HomePage() {
     return () => document.body.classList.remove('page-scroll')
   }, [])
 
+  useEffect(() => {
+    // 首页选定关卡后就开始预热该关词图
+    for (const id of selected.wordIds ?? []) {
+      const w = WORDS.find((x) => x.id === id)
+      if (!w?.image) continue
+      const img = new Image()
+      img.decoding = 'async'
+      img.src = w.image
+    }
+  }, [selected])
+
   const pickLevel = (id: LevelId) => {
     setLevelId(id)
     saveSelectedLevelId(id)
@@ -115,7 +126,14 @@ export function HomePage() {
       <section className="home-strip" aria-label="词卡预览">
         {preview.map((w) => (
           <div key={w.id} className="home-strip-card">
-            <img src={w.image} alt="" loading="lazy" decoding="async" />
+            <img
+              src={w.image}
+              alt=""
+              width={256}
+              height={256}
+              loading="lazy"
+              decoding="async"
+            />
           </div>
         ))}
       </section>
