@@ -13,44 +13,50 @@
 
 ---
 
-## 推荐工作流：GitHub + Cloud Agent + 自动部署
+## 推荐工作流：GitHub → Cloudflare Workers Builds
 
 ```text
-本机 / Cursor Cloud Agent
-        │  push / PR merge
+本机 / Cursor
+        │  push / PR merge → main
         ▼
-     GitHub (main)
-        │  GitHub Actions
+     GitHub
+        │  Cloudflare 拉取（Workers Builds）
         ▼
-  Cloudflare Workers  ← 实时可玩的线上站
+  build → 上传词图到 R2 → wrangler deploy
+        ▼
+  线上 Worker 可玩
 ```
 
-1. **代码进 GitHub**（不要提交 `.env` / `.dev.vars`）
-2. **Cloud Agent** 对着这个仓库改代码、提 PR；合并进 `main` 就会自动部署
-3. **Cloudflare** 用 Actions（本仓库已带 `.github/workflows/deploy.yml`）或 Dashboard 的 Workers Git 集成
+**只走这一条自动部署**（不要和 GitHub Actions 同时开着 push 部署，会双部署）。
 
-### Cloudflare Dashboard（连 GitHub）填法
+### Cloudflare Dashboard（连 GitHub）必填
 
-Cloudflare 会先在**仓库根**跑 `npm clean-install`（只装根依赖），**不会**自动装 `client/`。所以 Build 必须自己装 client：
+Workers & Pages → `speak-scroll` → Settings → Builds：
 
 | 项 | 建议值 |
 |----|--------|
 | Root directory | 留空（仓库根） |
 | Build command | `npm run build` |
-| Deploy command | `npm ci --prefix worker --legacy-peer-deps && npm run deploy --prefix worker` |
+| Deploy command | `npm run deploy:git` |
+| Production branch | `main` |
 
-`npm run build` = `npm ci --prefix client` + 前端构建。不要只填 `npm run build --prefix client`。
+说明：
 
-### GitHub Secrets（仓库 Settings → Secrets）
+- `npm run build` = 装 client + 打前端包，并删掉 `dist/words`（词图不进 Assets）
+- `npm run deploy:git` = 装 worker → **上传 R2 词图** → `wrangler deploy`
+- Workers Builds 自带的 API Token 需含 **Workers R2 Storage (edit)**；若用「Create new token」默认就有。旧 Token 若只有 Scripts 权限，上传会失败，到 Builds → API token 重建一枚即可。
 
-| Secret | 说明 |
-|--------|------|
-| `CLOUDFLARE_API_TOKEN` | Cloudflare API Token（Workers 编辑权限） |
-| `CLOUDFLARE_ACCOUNT_ID` | 账号 ID（Dashboard 右侧可复制） |
+改完 Deploy command 后，再 push 一次 `main`（或 Dashboard 里 Retry build）。
 
-讯飞密钥仍用 `wrangler secret put` 写在 Worker 上（不要放进 GitHub Secrets 除非改成 Actions 同步）。
+### 备用：GitHub Actions
 
-首次仍需在本机或 CI 外执行一次：D1 建库/建表 + `XFYUN_*` secrets（见下文）。
+`.github/workflows/deploy.yml` 默认只支持手动 `workflow_dispatch`，避免和 Workers Builds 抢部署。
+
+若改用 Actions 当主路径：在仓库 Secrets 配好 `CLOUDFLARE_API_TOKEN`（含 R2 edit）+ `CLOUDFLARE_ACCOUNT_ID`，并把 workflow 的 `on` 改回 `push: [main]`；同时关掉 Cloudflare Builds。
+
+讯飞密钥仍用 `wrangler secret put` 写在 Worker 上。
+
+首次仍需在本机执行一次：D1 建库/建表 + `XFYUN_*` secrets + R2 桶（见下文）。
 
 ---
 
@@ -246,7 +252,7 @@ npm run db:remote --prefix worker
    Secrets 未写入或写错环境；用 `npx wrangler secret list` 核对。
 
 3. **打开站点是空白 / 词图 404**  
-   先确认 `client/dist` 存在（部署脚本会先 build）。词图应在 R2：跑过 `npm run words:upload`，并确认 `wrangler.jsonc` 绑了 `speak-scroll-words`。本地 Vite 仍用 `client/public/words/`。
+   先确认 `client/dist` 存在（部署脚本会先 build）。词图应在 R2：Workers Builds 的 Deploy command 必须是 `npm run deploy:git`（会跑 `words:upload`）。若仍 404，本机跑一次 `npm run words:upload`，并确认 `wrangler.jsonc` 绑了 `speak-scroll-words`。本地 Vite 仍用 `client/public/words/`。
 
 4. **麦克风 / 讯飞连不上**  
    必须用 HTTPS（workers.dev 自带）。浏览器允许麦克风；讯飞控制台应用状态正常。

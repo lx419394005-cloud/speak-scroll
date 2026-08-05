@@ -31,11 +31,18 @@ if [[ ${#FILES[@]} -eq 0 ]]; then
 fi
 
 if [[ "$LOCAL" -eq 0 ]]; then
+  if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]] && ! "${W[@]}" whoami >/dev/null 2>&1; then
+    echo "缺少 Cloudflare 鉴权：设置 CLOUDFLARE_API_TOKEN（CI）或先 wrangler login（本机）" >&2
+    exit 1
+  fi
   echo "==> 确保远程桶存在: $BUCKET"
   "${W[@]}" r2 bucket create "$BUCKET" 2>/dev/null || true
 fi
 
 echo "==> 上传 ${#FILES[@]} 张词图 → $BUCKET/words/ …"
+# 并行上传，加快 CI / Workers Builds
+UPLOAD_PIDS=()
+UPLOAD_FAIL=0
 for f in "${FILES[@]}"; do
   rel="${f#"$WORDS_DIR"/}"
   key="words/$rel"
@@ -45,8 +52,25 @@ for f in "${FILES[@]}"; do
   else
     args+=(--remote)
   fi
-  echo "  put $key"
-  "${W[@]}" "${args[@]}"
+  (
+    echo "  put $key"
+    "${W[@]}" "${args[@]}"
+  ) &
+  UPLOAD_PIDS+=($!)
+  # 限制并发，避免打爆 API
+  if (( ${#UPLOAD_PIDS[@]} >= 6 )); then
+    for pid in "${UPLOAD_PIDS[@]}"; do
+      wait "$pid" || UPLOAD_FAIL=1
+    done
+    UPLOAD_PIDS=()
+  fi
 done
+for pid in "${UPLOAD_PIDS[@]:-}"; do
+  wait "$pid" || UPLOAD_FAIL=1
+done
+if [[ "$UPLOAD_FAIL" -ne 0 ]]; then
+  echo "部分词图上传失败" >&2
+  exit 1
+fi
 
-echo "==> 完成。线上由 Worker 提供 GET /words/**/*.webp（长缓存）。"
+echo "==> 完成。线上由 Worker 提供 GET /words/.../*.webp（长缓存）。"

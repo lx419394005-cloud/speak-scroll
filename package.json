@@ -11,6 +11,7 @@
     "build": "npm ci --prefix client && npm run build --prefix client && rm -rf client/dist/words",
     "deploy": "npm run build && npm run words:upload && npm run deploy --prefix worker",
     "deploy:cf": "bash ./scripts/cf-deploy.sh",
+    "deploy:git": "bash ./scripts/cf-git-deploy.sh",
     "deploy:leaderboard": "npm run deploy --prefix worker",
     "words:upload": "bash ./scripts/upload-words-r2.sh",
     "words:upload:local": "bash ./scripts/upload-words-r2.sh --local",
