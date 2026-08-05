@@ -36,12 +36,12 @@ export const PASS_ACCURACY = 55
 /** 整局时长（毫秒） */
 export const GAME_DURATION_MS = 60_000
 /** 单次开口最长录音 */
-export const ATTEMPT_MAX_MS = 4500
+export const ATTEMPT_MAX_MS = 4000
 /** 检测到说话后，静音多久算说完（太短会切掉词尾） */
-export const SILENCE_END_MS = 580
+export const SILENCE_END_MS = 380
 /** 最短录音时长 */
-export const MIN_RECORD_MS = 650
+export const MIN_RECORD_MS = 480
 /** 过关后翻卡停顿 */
-export const PASS_PAUSE_MS = 120
-/** 说错后重试停顿（需够读完揭晓的英文） */
-export const FAIL_PAUSE_MS = 1100
+export const PASS_PAUSE_MS = 80
+/** 说错后重试停顿 */
+export const FAIL_PAUSE_MS = 180

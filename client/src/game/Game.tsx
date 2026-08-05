@@ -15,8 +15,10 @@ import {
   evaluateRecordedWord,
   isPronunciationPass,
   prepareIseConnection,
+  startLiveIseUpload,
   type PreparedIse,
   type IseResult,
+  type LiveIseUpload,
 } from '../ise/client'
 import {
   formatDurationLabel,
@@ -116,8 +118,9 @@ export function Game() {
   const pauseStartedRef = useRef(0)
   const endedRef = useRef(false)
   const levelRef = useRef<LevelConfig>(level)
-  /** 下一轮预连的 WebSocket，说完即可上传 */
   const warmPromiseRef = useRef<Promise<PreparedIse | null> | null>(null)
+  const liveUploadRef = useRef<LiveIseUpload | null>(null)
+  const heardBytesRef = useRef(0)
 
   const current = deck[index]
 
@@ -187,6 +190,9 @@ export function Game() {
   const cleanupMic = useCallback(async () => {
     abortRef.current?.abort()
     abortRef.current = null
+    const pendingLive = liveUploadRef.current
+    liveUploadRef.current = null
+    pendingLive?.cancel()
     closeWarm()
     if (recorderRef.current) {
       recorderRef.current.stopCapture()
@@ -323,7 +329,6 @@ export function Game() {
   }, [])
 
   const recordUntilDone = useCallback(async (session: number, signal: AbortSignal) => {
-    queueRef.current.clear()
     setRecState('listening')
     setStatusText('正在听，请大声说完…')
     setFlash(null)
@@ -367,12 +372,12 @@ export function Game() {
           silenceMs += 30
         }
 
-        const minBytes = 16000 * 2 * 0.5
-        const hasAudio = queueRef.current.byteLength() >= minBytes
+        const minBytes = 16000 * 2 * 0.35
+        const hasAudio = heardBytesRef.current >= minBytes
         const doneBySilence =
           spoken && silenceMs >= SILENCE_END_MS && elapsed >= MIN_RECORD_MS && hasAudio
         const doneByTimeout = elapsed >= ATTEMPT_MAX_MS && hasAudio
-        const forceEnd = elapsed >= ATTEMPT_MAX_MS + 800
+        const forceEnd = elapsed >= ATTEMPT_MAX_MS + 600
 
         if (doneBySilence || doneByTimeout || forceEnd) {
           window.clearInterval(tick)
@@ -383,34 +388,70 @@ export function Game() {
     })
 
     recorderRef.current?.stopCapture()
-    return queueRef.current.drain()
   }, [])
 
   const runOneAttempt = useCallback(
     async (word: WordCard, session: number) => {
       const abort = new AbortController()
       abortRef.current = abort
+      liveUploadRef.current = null
+      queueRef.current.clear()
+      heardBytesRef.current = 0
 
-      let prepared: PreparedIse | null = null
+      const cancelLive = { fn: null as null | (() => void) }
+
+      // 录音同时预连并开始边录边传，减少说完后的空等
+      const uploadReady = takeWarm(abort.signal)
+        .then(async (prepared) => {
+          if (abort.signal.aborted) throw new Error('Aborted')
+          const live = await startLiveIseUpload({
+            word: word.word,
+            prepared,
+            signal: abort.signal,
+          })
+          cancelLive.fn = () => live.cancel()
+          liveUploadRef.current = live
+          const backlog = queueRef.current.drain()
+          if (backlog.length > 0) live.push(backlog)
+          return live
+        })
+        .catch((err) => {
+          console.warn('[ise] live upload start failed', err)
+          return null
+        })
+
       try {
-        const pcm = await recordUntilDone(session, abort.signal)
+        await recordUntilDone(session, abort.signal)
         if (sessionRef.current !== session || endedRef.current) {
           throw new Error('Aborted')
         }
 
-        // 先切到评分态，再等预连，避免“还在听”空等
         setRecState('scoring')
         setStatusText('评分中…')
 
-        prepared = await takeWarm(abort.signal)
+        const live = await uploadReady
+        const leftover = queueRef.current.drain()
+
+        if (live) {
+          if (leftover.length > 0) live.push(leftover)
+          liveUploadRef.current = null
+          return await live.finish()
+        }
+
+        // 预连失败：退回整包上传
+        liveUploadRef.current = null
+        cancelLive.fn = null
+        if (leftover.length < 1600) {
+          throw new Error('录音太短，请再说一次')
+        }
         return await evaluateRecordedWord({
           word: word.word,
-          pcm,
-          prepared,
+          pcm: leftover,
           signal: abort.signal,
         })
       } catch (err) {
-        prepared?.ws.close()
+        cancelLive.fn?.()
+        liveUploadRef.current = null
         throw err
       } finally {
         recorderRef.current?.stopCapture()
@@ -441,10 +482,9 @@ export function Game() {
       setHeardText('对了')
       setStatusText('说对了！下一张…')
     } else {
-      const answer = deckRef.current[indexRef.current]?.word ?? ''
       setFlash('fail')
-      setHeardText(answer || '再试')
-      setStatusText(answer ? `答案是 ${answer}，再说一次` : reason || '请再说一次')
+      setHeardText('再试')
+      setStatusText(reason || '请再说一次')
     }
 
     return passed
@@ -461,7 +501,12 @@ export function Game() {
       try {
         if (!recorderRef.current) {
           recorderRef.current = await createGameMicRecorder((chunk) => {
-            queueRef.current.push(chunk)
+            heardBytesRef.current += chunk.byteLength
+            if (liveUploadRef.current) {
+              liveUploadRef.current.push(chunk)
+            } else {
+              queueRef.current.push(chunk)
+            }
           })
         }
 
@@ -476,11 +521,10 @@ export function Game() {
             if (cancelled || sessionRef.current !== session || endedRef.current) return
             if (err instanceof Error && err.message === 'Aborted') return
             console.error(err)
-            const answer = word.word
             setRecState('idle')
             setFlash('fail')
             setStatusText(err instanceof Error ? err.message : '评测失败')
-            setHeardText(answer)
+            setHeardText('再试')
             await sleep(FAIL_PAUSE_MS)
             if (cancelled || sessionRef.current !== session || endedRef.current) return
             setFlash(null)
@@ -570,7 +614,12 @@ export function Game() {
       await cleanupMic()
       queueRef.current = createPcmQueue()
       recorderRef.current = await createGameMicRecorder((chunk) => {
-        queueRef.current.push(chunk)
+        heardBytesRef.current += chunk.byteLength
+        if (liveUploadRef.current) {
+          liveUploadRef.current.push(chunk)
+        } else {
+          queueRef.current.push(chunk)
+        }
       })
       recorderRef.current.stopCapture()
 
@@ -811,12 +860,6 @@ export function Game() {
                     }, 200 * (retries + 1))
                   }}
                 />
-                {flash === 'fail' && (
-                  <div className="word-reveal" aria-live="polite">
-                    <span className="word-reveal-label">答案</span>
-                    <strong className="word-reveal-text">{current.word}</strong>
-                  </div>
-                )}
               </div>
             </div>
 
