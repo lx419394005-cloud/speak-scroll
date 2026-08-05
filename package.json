@@ -3,9 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "concurrently -n server,worker,client -c cyan,yellow,magenta \"npm run dev --prefix server\" \"npm run dev --prefix worker\" \"npm run dev --prefix client\"",
+    "dev": "bash ./scripts/dev.sh",
+    "dev:raw": "concurrently -n server,worker,client -c cyan,yellow,magenta \"npm run dev --prefix server\" \"npm run dev --prefix worker\" \"npm run dev --prefix client\"",
     "dev:server": "npm run dev --prefix server",
-    "dev:worker": "npm run dev --prefix worker",
+    "dev:worker": "bash ./scripts/ensure-dist.sh && npm run db:local --prefix worker; npm run dev --prefix worker",
     "dev:client": "npm run dev --prefix client",
     "build": "npm ci --prefix client && npm run build --prefix client && rm -rf client/dist/words",
     "deploy": "npm run build && npm run words:upload && npm run deploy --prefix worker",
