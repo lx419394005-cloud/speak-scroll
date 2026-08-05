@@ -43,5 +43,5 @@ export const SILENCE_END_MS = 580
 export const MIN_RECORD_MS = 650
 /** 过关后翻卡停顿 */
 export const PASS_PAUSE_MS = 120
-/** 说错后重试停顿 */
-export const FAIL_PAUSE_MS = 280
+/** 说错后重试停顿（需够读完揭晓的英文） */
+export const FAIL_PAUSE_MS = 1100

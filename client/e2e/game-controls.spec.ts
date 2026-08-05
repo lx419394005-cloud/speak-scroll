@@ -82,3 +82,16 @@ test.describe('暂停与回主页 (mockMic)', () => {
     await expect(page).toHaveURL('/')
   })
 })
+
+test.describe('失败揭晓英文 (mockMic)', () => {
+  test('评测失败时卡片上显示英文答案', async ({ page }) => {
+    await startMockRound(page, 'easy')
+
+    // mockMic 无鉴权服务时会评测失败，应揭晓当前词
+    const reveal = page.locator('.word-reveal .word-reveal-text')
+    await expect(reveal).toBeVisible({ timeout: 20_000 })
+    const text = (await reveal.textContent())?.trim() ?? ''
+    expect(text.length).toBeGreaterThan(0)
+    expect(text).toMatch(/^[a-z]+$/i)
+  })
+})

@@ -441,9 +441,10 @@ export function Game() {
       setHeardText('对了')
       setStatusText('说对了！下一张…')
     } else {
+      const answer = deckRef.current[indexRef.current]?.word ?? ''
       setFlash('fail')
-      setHeardText('再试')
-      setStatusText(reason || '请再说一次')
+      setHeardText(answer || '再试')
+      setStatusText(answer ? `答案是 ${answer}，再说一次` : reason || '请再说一次')
     }
 
     return passed
@@ -475,11 +476,14 @@ export function Game() {
             if (cancelled || sessionRef.current !== session || endedRef.current) return
             if (err instanceof Error && err.message === 'Aborted') return
             console.error(err)
+            const answer = word.word
             setRecState('idle')
             setFlash('fail')
             setStatusText(err instanceof Error ? err.message : '评测失败')
-            setHeardText('')
-            await sleep(400)
+            setHeardText(answer)
+            await sleep(FAIL_PAUSE_MS)
+            if (cancelled || sessionRef.current !== session || endedRef.current) return
+            setFlash(null)
             continue
           }
 
@@ -807,6 +811,12 @@ export function Game() {
                     }, 200 * (retries + 1))
                   }}
                 />
+                {flash === 'fail' && (
+                  <div className="word-reveal" aria-live="polite">
+                    <span className="word-reveal-label">答案</span>
+                    <strong className="word-reveal-text">{current.word}</strong>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -868,6 +878,20 @@ export function Game() {
                 : `${formatDurationLabel(durationMs)}说对了这么多张`}
             </p>
             {isNewBest && score > 0 && <p className="new-best-tag">BEST</p>}
+
+            {current && (
+              <div className="missed-reveal">
+                <p className="missed-label">最后这张是</p>
+                <div className="word-card missed-card">
+                  <img src={current.image} alt="" draggable={false} />
+                  <div className="word-reveal">
+                    <span className="word-reveal-label">答案</span>
+                    <strong className="word-reveal-text">{current.word}</strong>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {globalRank != null && (
               <p className="rank-line">
                 {nickname.trim() || '你'} · 全球第 {globalRank} 名
