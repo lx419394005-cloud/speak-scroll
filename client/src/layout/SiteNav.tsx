@@ -2,7 +2,6 @@ import { NavLink } from 'react-router-dom'
 
 const links = [
   { to: '/', label: '首页', end: true },
-  { to: '/play', label: '开玩' },
   { to: '/leaderboard', label: '排行榜' },
   { to: '/how-to', label: '玩法' },
 ]

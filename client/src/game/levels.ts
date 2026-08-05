@@ -1,12 +1,14 @@
 import {
   BEAST_IDS,
   FRUIT_IDS,
+  MIXED_IDS,
+  PACKING_IDS,
   VOYAGE_IDS,
   WORDS,
   type WordCard,
 } from '../data/words'
 
-export type LevelId = 'beasts' | 'fruits' | 'voyage'
+export type LevelId = 'beasts' | 'fruits' | 'voyage' | 'packing' | 'mixed'
 
 export type LevelConfig = {
   id: LevelId
@@ -16,18 +18,21 @@ export type LevelConfig = {
   /** 关卡全名 */
   name: string
   blurb: string
+  /** 首页选关图标 */
+  icon: string
   durationMs: number
   passScore: number
   passAccuracy: number
   /** null = 使用全部词 */
   wordIds: string[] | null
+  /** 本局牌堆循环遍数（越大越晚才可能重复手感） */
+  deckPasses: number
+  /** 是否展示中文谜语提示 */
+  showHints?: boolean
 }
 
 /**
- * 主题关卡（抽象题材包，而非难度阶梯）：
- * - 奇兽：小众动物
- * - 怪果：冷门水果
- * - 旅途：旅行场景物件/场所
+ * 主题关卡 + 行囊情景 + 乱斗
  */
 export const LEVELS: LevelConfig[] = [
   {
@@ -35,38 +40,71 @@ export const LEVELS: LevelConfig[] = [
     order: 1,
     title: '奇兽',
     name: '第1关 · 奇兽',
-    blurb: '小众动物图鉴，90 秒乱序说名',
-    durationMs: 90_000,
+    blurb: '小众动物',
+    icon: '/words/axolotl.webp',
+    durationMs: 30_000,
     passScore: 55,
     passAccuracy: 50,
     wordIds: [...BEAST_IDS],
+    deckPasses: 3,
   },
   {
     id: 'fruits',
     order: 2,
     title: '怪果',
     name: '第2关 · 怪果',
-    blurb: '冷门水果，1 分钟看图喊名',
-    durationMs: 60_000,
+    blurb: '冷门水果',
+    icon: '/words/durian.webp',
+    durationMs: 30_000,
     passScore: 60,
     passAccuracy: 55,
     wordIds: [...FRUIT_IDS],
+    deckPasses: 3,
   },
   {
     id: 'voyage',
     order: 3,
     title: '旅途',
     name: '第3关 · 旅途',
-    blurb: '旅行场景词，节奏更紧、评分更严',
-    durationMs: 60_000,
+    blurb: '旅行场景',
+    icon: '/words/compass.webp',
+    durationMs: 30_000,
     passScore: 65,
     passAccuracy: 60,
     wordIds: [...VOYAGE_IDS],
+    deckPasses: 3,
+  },
+  {
+    id: 'packing',
+    order: 4,
+    title: '行囊',
+    name: '第4关 · 行囊',
+    blurb: '情景谜语',
+    icon: '/words/travel-fun/passport.webp',
+    durationMs: 30_000,
+    passScore: 58,
+    passAccuracy: 52,
+    wordIds: [...PACKING_IDS],
+    deckPasses: 2,
+    showHints: true,
+  },
+  {
+    id: 'mixed',
+    order: 5,
+    title: '乱斗',
+    name: '第5关 · 乱斗',
+    blurb: '三套合集',
+    icon: '/words/postcard.webp',
+    durationMs: 30_000,
+    passScore: 60,
+    passAccuracy: 55,
+    wordIds: [...MIXED_IDS],
+    deckPasses: 2,
   },
 ]
 
 const STORAGE_KEY = 'speak-scroll-level'
-const DEFAULT_LEVEL: LevelId = 'fruits'
+const DEFAULT_LEVEL: LevelId = 'packing'
 
 /** 旧版关卡 id → 新主题 */
 const LEGACY_LEVEL_MAP: Record<string, LevelId> = {
@@ -76,7 +114,13 @@ const LEGACY_LEVEL_MAP: Record<string, LevelId> = {
 }
 
 export function isLevelId(value: string | null | undefined): value is LevelId {
-  return value === 'beasts' || value === 'fruits' || value === 'voyage'
+  return (
+    value === 'beasts' ||
+    value === 'fruits' ||
+    value === 'voyage' ||
+    value === 'packing' ||
+    value === 'mixed'
+  )
 }
 
 export function getLevel(id: LevelId): LevelConfig {
@@ -109,6 +153,62 @@ export function wordsForLevel(level: LevelConfig): WordCard[] {
     .map((id) => byId.get(id))
     .filter((w): w is WordCard => Boolean(w))
   return picked.length > 0 ? picked : [...WORDS]
+}
+
+export function shuffle<T>(items: T[]): T[] {
+  const arr = [...items]
+  for (let i = arr.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[arr[i], arr[j]] = [arr[j]!, arr[i]!]
+  }
+  return arr
+}
+
+/**
+ * 多圈洗牌：同一词在相邻位置尽量隔开，避免「刚刷完又见到」。
+ */
+export function buildSessionDeck(
+  pool: WordCard[],
+  passes = 3,
+  avoidIds: string[] = [],
+): WordCard[] {
+  if (pool.length === 0) return []
+  if (pool.length === 1) {
+    return Array.from({ length: Math.max(1, passes) }, () => pool[0]!)
+  }
+
+  const gap = Math.min(Math.max(3, Math.floor(pool.length / 2)), pool.length - 1)
+  const out: WordCard[] = []
+
+  for (let p = 0; p < passes; p += 1) {
+    let batch = shuffle(pool)
+
+    const recent = new Set(
+    out.length > 0
+      ? out.slice(-gap).map((w) => w.id)
+      : avoidIds.slice(-gap),
+  )
+
+    for (let rot = 0; rot < batch.length; rot += 1) {
+      const rotated = [...batch.slice(rot), ...batch.slice(0, rot)]
+      if (!recent.has(rotated[0]!.id)) {
+        batch = rotated
+        break
+      }
+    }
+
+    // 边界再修一次：首张不与上一张相同
+    if (out.length > 0 && batch[0]?.id === out[out.length - 1]?.id && batch.length > 1) {
+      const swapAt = batch.findIndex((w, i) => i > 0 && !recent.has(w.id))
+      if (swapAt > 0) {
+        ;[batch[0], batch[swapAt]] = [batch[swapAt]!, batch[0]!]
+      }
+    }
+
+    out.push(...batch)
+  }
+
+  return out
 }
 
 export function formatDurationLabel(ms: number): string {

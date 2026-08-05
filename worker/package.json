@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev --port 8787 --name speak-scroll",
+    "dev": "wrangler dev --port 8788 --name speak-scroll",
     "deploy": "wrangler deploy --name speak-scroll",
     "db:local": "wrangler d1 execute speak-scroll --local --file=./migrations/0001_init.sql",
     "db:remote": "wrangler d1 execute speak-scroll --remote --file=./migrations/0001_init.sql",

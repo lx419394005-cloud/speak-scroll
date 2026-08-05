@@ -6,6 +6,7 @@ import {
   MIN_RECORD_MS,
   PASS_PAUSE_MS,
   SILENCE_END_MS,
+  SKIP_REVEAL_MS,
   type WordCard,
 } from '../data/words'
 import { createGameMicRecorder, type MicRecorder, wantsMockMic } from '../ise/audio'
@@ -23,7 +24,7 @@ import {
   formatDurationLabel,
   getLevel,
   isLevelId,
-  LEVELS,
+  buildSessionDeck,
   loadSelectedLevelId,
   saveSelectedLevelId,
   wordsForLevel,
@@ -47,15 +48,6 @@ import {
 type Phase = 'idle' | 'playing' | 'paused' | 'gameover'
 type Flash = 'pass' | 'fail' | null
 type RecState = 'idle' | 'listening' | 'scoring'
-
-function shuffle<T>(items: T[]): T[] {
-  const arr = [...items]
-  for (let i = arr.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[arr[i], arr[j]] = [arr[j]!, arr[i]!]
-  }
-  return arr
-}
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => {
@@ -83,8 +75,8 @@ function resolveLevelId(param: string | null): LevelId {
 
 export function Game() {
   const navigate = useNavigate()
-  const [searchParams, setSearchParams] = useSearchParams()
-  const [levelId, setLevelId] = useState<LevelId>(() =>
+  const [searchParams] = useSearchParams()
+  const [levelId] = useState<LevelId>(() =>
     resolveLevelId(searchParams.get('level')),
   )
   const level = getLevel(levelId)
@@ -98,6 +90,7 @@ export function Game() {
   const [recState, setRecState] = useState<RecState>('idle')
   const [statusText, setStatusText] = useState('准备好了吗？')
   const [heardText, setHeardText] = useState('')
+  const [showAnswer, setShowAnswer] = useState(false)
   const [slideKey, setSlideKey] = useState(0)
   const [enterAnim, setEnterAnim] = useState(true)
   const [micLevel, setMicLevel] = useState(0)
@@ -108,6 +101,7 @@ export function Game() {
   const [globalRank, setGlobalRank] = useState<number | null>(null)
   const [lbStatus, setLbStatus] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [skipping, setSkipping] = useState(false)
   const savedThisRoundRef = useRef(false)
 
   const recorderRef = useRef<MicRecorder | null>(null)
@@ -120,6 +114,7 @@ export function Game() {
   const gameStartRef = useRef(0)
   const pauseStartedRef = useRef(0)
   const endedRef = useRef(false)
+  const skipRef = useRef(false)
   const levelRef = useRef<LevelConfig>(level)
   const warmPromiseRef = useRef<Promise<PreparedIse | null> | null>(null)
   const liveUploadRef = useRef<LiveIseUpload | null>(null)
@@ -130,19 +125,6 @@ export function Game() {
   useEffect(() => {
     levelRef.current = level
   }, [level])
-
-  const pickLevel = useCallback(
-    (id: LevelId) => {
-      if (phase === 'playing' || phase === 'paused') return
-      setLevelId(id)
-      saveSelectedLevelId(id)
-      setTimeLeft(getLevel(id).durationMs)
-      const next = new URLSearchParams(searchParams)
-      next.set('level', id)
-      setSearchParams(next, { replace: true })
-    },
-    [phase, searchParams, setSearchParams],
-  )
 
   const closeWarm = useCallback(() => {
     const pending = warmPromiseRef.current
@@ -313,14 +295,17 @@ export function Game() {
     return () => window.clearInterval(tick)
   }, [phase, endGame])
 
-  const advanceCard = useCallback(() => {
-    scoreRef.current += 1
-    setScore(scoreRef.current)
-
+  const moveToNextCard = useCallback(() => {
     let nextIndex = indexRef.current + 1
     let nextDeck = deckRef.current
     if (nextIndex >= nextDeck.length) {
-      nextDeck = shuffle(wordsForLevel(levelRef.current))
+      const level = levelRef.current
+      const recentIds = nextDeck.slice(-6).map((w) => w.id)
+      nextDeck = buildSessionDeck(
+        wordsForLevel(level),
+        level.deckPasses,
+        recentIds,
+      )
       deckRef.current = nextDeck
       setDeck(nextDeck)
       nextIndex = 0
@@ -330,6 +315,12 @@ export function Game() {
     setEnterAnim(true)
     setSlideKey((k) => k + 1)
   }, [])
+
+  const advanceCard = useCallback(() => {
+    scoreRef.current += 1
+    setScore(scoreRef.current)
+    moveToNextCard()
+  }, [moveToNextCard])
 
   const recordUntilDone = useCallback(async (session: number, signal: AbortSignal) => {
     setRecState('listening')
@@ -517,12 +508,46 @@ export function Game() {
           const word = deckRef.current[indexRef.current]
           if (!word) break
 
+          const revealAndSkip = async () => {
+            skipRef.current = false
+            setSkipping(true)
+            setRecState('idle')
+            setFlash(null)
+            setShowAnswer(true)
+            setHeardText(word.word)
+            setStatusText(`答案是 ${word.word}`)
+            // 等两帧，确保揭晓 UI 先画出来
+            await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())))
+            await sleep(SKIP_REVEAL_MS)
+            if (cancelled || sessionRef.current !== session || endedRef.current) return false
+            setShowAnswer(false)
+            setHeardText('')
+            setSkipping(false)
+            moveToNextCard()
+            return true
+          }
+
+          if (skipRef.current) {
+            const ok = await revealAndSkip()
+            if (!ok) return
+            continue
+          }
+
           let result: IseResult
           try {
             result = await runOneAttempt(word, session)
           } catch (err) {
             if (cancelled || sessionRef.current !== session || endedRef.current) return
-            if (err instanceof Error && err.message === 'Aborted') return
+            if (skipRef.current) {
+              const ok = await revealAndSkip()
+              if (!ok) return
+              continue
+            }
+            const aborted =
+              (err instanceof Error && err.message === 'Aborted') ||
+              (err instanceof DOMException && err.name === 'AbortError') ||
+              (err instanceof Error && err.name === 'AbortError')
+            if (aborted) return
             console.error(err)
             setRecState('idle')
             setFlash('fail')
@@ -530,11 +555,21 @@ export function Game() {
             setHeardText('再试')
             await sleep(FAIL_PAUSE_MS)
             if (cancelled || sessionRef.current !== session || endedRef.current) return
+            if (skipRef.current) {
+              const ok = await revealAndSkip()
+              if (!ok) return
+              continue
+            }
             setFlash(null)
             continue
           }
 
           if (cancelled || sessionRef.current !== session || endedRef.current) return
+          if (skipRef.current) {
+            const ok = await revealAndSkip()
+            if (!ok) return
+            continue
+          }
 
           const passed = applyResult(result)
           setRecState('idle')
@@ -542,6 +577,11 @@ export function Game() {
           if (passed) {
             await sleep(PASS_PAUSE_MS)
             if (cancelled || sessionRef.current !== session || endedRef.current) return
+            if (skipRef.current) {
+              const ok = await revealAndSkip()
+              if (!ok) return
+              continue
+            }
             setFlash(null)
             setHeardText('')
             advanceCard()
@@ -550,6 +590,11 @@ export function Game() {
 
           await sleep(FAIL_PAUSE_MS)
           if (cancelled || sessionRef.current !== session || endedRef.current) return
+          if (skipRef.current) {
+            const ok = await revealAndSkip()
+            if (!ok) return
+            continue
+          }
           setFlash(null)
         }
       } catch (err) {
@@ -567,19 +612,21 @@ export function Game() {
       recorderRef.current?.stopCapture()
       closeWarm()
     }
-  }, [phase, runOneAttempt, applyResult, advanceCard, closeWarm])
+  }, [phase, runOneAttempt, applyResult, advanceCard, moveToNextCard, closeWarm])
 
   const pauseGame = useCallback(() => {
-    if (phase !== 'playing' || endedRef.current) return
+    if (phase !== 'playing' || endedRef.current || skipping) return
+    skipRef.current = false
     pauseStartedRef.current = performance.now()
     abortRef.current?.abort()
     recorderRef.current?.stopCapture()
     setRecState('idle')
     setMicLevel(0)
     setFlash(null)
+    setShowAnswer(false)
     setPhase('paused')
     setStatusText('已暂停')
-  }, [phase])
+  }, [phase, skipping])
 
   const resumeGame = useCallback(() => {
     if (phase !== 'paused' || endedRef.current) return
@@ -588,6 +635,24 @@ export function Game() {
     setPhase('playing')
     setStatusText('继续说…')
   }, [phase])
+
+  const skipCard = useCallback(() => {
+    if (phase !== 'playing' || endedRef.current || skipping || skipRef.current) return
+    const word = deckRef.current[indexRef.current]
+    skipRef.current = true
+    // 立刻揭晓，不等 abort 回调，避免「闪一下就跳走」
+    setSkipping(true)
+    setRecState('idle')
+    setFlash(null)
+    setShowAnswer(true)
+    if (word) {
+      setHeardText(word.word)
+      setStatusText(`答案是 ${word.word}`)
+    }
+    setMicLevel(0)
+    abortRef.current?.abort()
+    recorderRef.current?.stopCapture()
+  }, [phase, skipping])
 
   const goHome = useCallback(() => {
     endedRef.current = true
@@ -633,7 +698,7 @@ export function Game() {
       const active = getLevel(levelId)
       levelRef.current = active
       const pool = wordsForLevel(active)
-      const nextDeck = shuffle(pool)
+      const nextDeck = buildSessionDeck(pool, active.deckPasses)
       deckRef.current = nextDeck
       indexRef.current = 0
       scoreRef.current = 0
@@ -681,69 +746,83 @@ export function Game() {
   const inRound = phase === 'playing' || phase === 'paused'
 
   const formatTime = (ms: number) => {
-    const total = Math.ceil(ms / 1000)
+    const total = Math.max(0, Math.ceil(ms / 1000))
     const m = Math.floor(total / 60)
     const s = total % 60
     return `${m}:${s.toString().padStart(2, '0')}`
   }
 
+  const countdownSec = Math.max(0, Math.ceil(timeLeft / 1000))
+
   const idleTimeLabel = () => {
     const total = Math.round(durationMs / 1000)
-    const m = Math.floor(total / 60)
-    const s = total % 60
-    return `${m}:${s.toString().padStart(2, '0')}`
+    return `${total} 秒`
   }
 
   return (
     <div
-      className={`game ${flash ? `flash-${flash}` : ''} ${urgency && phase === 'playing' ? 'urgent' : ''}`}
+      className={`game ${flash ? `flash-${flash}` : ''} ${urgency && phase === 'playing' ? 'urgent' : ''} ${phase === 'idle' ? 'is-ready' : ''} ${phase === 'gameover' ? 'is-ended' : ''} ${inRound ? 'is-playing' : ''}`}
     >
-      <header className="hud">
+      <header className={`hud${inRound ? ' hud-play' : ''}`}>
         {inRound ? (
-          <div className="brand">Speak Scroll</div>
-        ) : (
-          <Link to="/" className="brand">
-            Speak Scroll
-          </Link>
-        )}
-        <div className="hud-right">
-          <div className="hud-stats">
-            <div className="stat">
-              <span className="stat-label">关卡</span>
-              <span className="stat-value level-stat">{level.order}</span>
-            </div>
-            <div className="stat">
-              <span className="stat-label">说对</span>
-              <span className="stat-value">{score}</span>
-            </div>
-            <div className="stat">
-              <span className="stat-label">最高</span>
-              <span className="stat-value">{board.best}</span>
-            </div>
-            <div className="stat">
-              <span className="stat-label">剩余</span>
-              <span className="stat-value timer-stat">
-                {inRound || phase === 'gameover' ? formatTime(timeLeft) : idleTimeLabel()}
+          <>
+            <div className="play-scoreline" aria-label="对局状态">
+              <span className="play-score">
+                <em>{score}</em> 说对
               </span>
+              <span className="play-level">{level.title}</span>
             </div>
-          </div>
-          {inRound && (
-            <div className="hud-actions">
-              {phase === 'playing' ? (
-                <button type="button" className="hud-btn" onClick={pauseGame}>
-                  暂停
-                </button>
-              ) : (
-                <button type="button" className="hud-btn" onClick={resumeGame}>
-                  继续
-                </button>
-              )}
-              <button type="button" className="hud-btn ghost" onClick={goHome}>
-                主页
+            <div
+              className={`play-countdown${urgency ? ' urgent' : ''}`}
+              aria-label={`剩余 ${countdownSec} 秒`}
+            >
+              {countdownSec}
+            </div>
+          </>
+        ) : (
+          <>
+            <Link to="/" className="brand">
+              Speak Scroll
+            </Link>
+            <div className="hud-right">
+              <div className="hud-stats">
+                {phase === 'gameover' ? (
+                  <>
+                    <div className="stat">
+                      <span className="stat-label">说对</span>
+                      <span className="stat-value">{score}</span>
+                    </div>
+                    <div className="stat">
+                      <span className="stat-label">最高</span>
+                      <span className="stat-value">{board.best}</span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="stat">
+                    <span className="stat-label">时长</span>
+                    <span className="stat-value timer-stat">{idleTimeLabel()}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+        {inRound && (
+          <div className="hud-actions">
+            {phase === 'playing' ? (
+              <button type="button" className="hud-btn" onClick={pauseGame}>
+                暂停
               </button>
-            </div>
-          )}
-        </div>
+            ) : (
+              <button type="button" className="hud-btn" onClick={resumeGame}>
+                继续
+              </button>
+            )}
+            <button type="button" className="hud-btn ghost" onClick={goHome}>
+              主页
+            </button>
+          </div>
+        )}
       </header>
 
       <div className="timer-track" aria-hidden={!inRound}>
@@ -761,89 +840,58 @@ export function Game() {
         />
       </div>
 
-      <div
-        className="mic-meter"
-        aria-label="microphone level"
-        aria-hidden={phase !== 'playing'}
-        style={phase !== 'playing' ? { opacity: 0.35 } : undefined}
-      >
-        <span className="mic-label">MIC</span>
-        <div className="mic-track">
-          <div className="mic-fill" style={{ transform: `scaleX(${micLevel})` }} />
+      {phase === 'playing' && (
+        <div className="mic-meter" aria-label="microphone level">
+          <div className="mic-track">
+            <div className="mic-fill" style={{ transform: `scaleX(${micLevel})` }} />
+          </div>
         </div>
-      </div>
+      )}
 
       <main className="stage">
         {phase === 'idle' && (
           <div className="panel start-panel play-ready">
-            <h1>准备开麦</h1>
-            <p>
-              你好，<strong>{nickname.trim() || '玩家'}</strong>
-              。选好关卡再开麦。
+            <p className="ready-hello">
+              {nickname.trim() || '玩家'}，准备好了吗？
             </p>
-
-            <fieldset className="level-picker compact">
-              <legend>选择关卡</legend>
-              <div className="level-grid" role="radiogroup" aria-label="关卡">
-                {LEVELS.map((item) => {
-                  const active = item.id === levelId
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      role="radio"
-                      aria-checked={active}
-                      className={`level-card${active ? ' active' : ''}`}
-                      onClick={() => pickLevel(item.id)}
-                    >
-                      <span className="level-order">第 {item.order} 关</span>
-                      <strong className="level-title">{item.title}</strong>
-                      <span className="level-blurb">{item.blurb}</span>
-                      <span className="level-meta">
-                        {formatDurationLabel(item.durationMs)}
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
-            </fieldset>
-
-            <div className="record-strip compact">
-              <div className="record-pill">
-                <span className="record-pill-label">本机最高</span>
-                <span className="record-pill-value">{board.best}</span>
-              </div>
-              <div className="record-pill">
-                <span className="record-pill-label">已玩</span>
-                <span className="record-pill-value">{board.gamesPlayed}</span>
-              </div>
+            <div className="ready-level" aria-label="当前关卡">
+              <strong className="ready-level-title">{level.title}</strong>
+              <span className="ready-level-meta">
+                {formatDurationLabel(level.durationMs)} · {level.blurb}
+              </span>
             </div>
             <button type="button" className="cta" onClick={() => void startGame()}>
-              开麦 · {level.name}
+              开麦开始
             </button>
             {wantsMockMic() && (
-              <p className="hint mock-mic-hint">假麦模式（mockMic=1）：可测暂停/主页，不走真实发音评分</p>
+              <p className="hint mock-mic-hint">假麦模式（mockMic=1）</p>
             )}
-            <div className="home-cta-row">
+            <div className="home-cta-row ready-links">
               <Link className="text-link" to="/">
-                回首页
-              </Link>
-              <Link className="text-link" to="/leaderboard">
-                排行榜
-              </Link>
-              <Link className="text-link" to="/how-to">
-                玩法
+                换关卡
               </Link>
             </div>
-            <p className="hint">{statusText}</p>
+            {statusText && statusText !== '准备好了吗？' ? (
+              <p className="hint">{statusText}</p>
+            ) : null}
           </div>
         )}
 
         {(phase === 'playing' || phase === 'paused') && current && (
-          <div className={`play-area${phase === 'paused' ? ' is-paused' : ''}`}>
+          <div className={`play-area${phase === 'paused' ? ' is-paused' : ''}${current.hint && level.showHints ? ' has-hint' : ''}`}>
+            {current.hint && level.showHints && !showAnswer && (
+              <p className="card-hint" aria-label="中文提示">
+                {current.hint}
+              </p>
+            )}
+            {showAnswer && (
+              <p className="card-answer-banner" aria-live="polite">
+                答案是 <strong>{current.word}</strong>
+              </p>
+            )}
             <div key={slideKey} className="card-rail">
               <div
-                className={`word-card ${enterAnim ? 'rush-in' : ''} ${flash === 'fail' ? 'shake-card' : ''}`}
+                className={`word-card ${enterAnim ? 'rush-in' : ''} ${flash === 'fail' ? 'shake-card' : ''}${showAnswer ? ' show-answer' : ''}`}
                 onAnimationEnd={() => setEnterAnim(false)}
               >
                 <img
@@ -866,32 +914,56 @@ export function Game() {
                     }, 200 * (retries + 1))
                   }}
                 />
+                {showAnswer && (
+                  <div className="word-reveal">
+                    <span className="word-reveal-label">答案</span>
+                    <strong className="word-reveal-text">{current.word}</strong>
+                  </div>
+                )}
               </div>
             </div>
 
-            <div className={`rec-badge ${phase === 'paused' ? 'paused' : recState}`}>
+            {phase === 'playing' && (
+              <button
+                type="button"
+                className="skip-btn"
+                onClick={skipCard}
+                disabled={skipping}
+              >
+                不会这张
+              </button>
+            )}
+
+            <div
+              className={`play-status ${
+                phase === 'paused'
+                  ? 'paused'
+                  : skipping
+                    ? 'skipped'
+                    : flash === 'pass'
+                      ? 'ok'
+                      : flash === 'fail'
+                        ? 'bad'
+                        : recState
+              }`}
+            >
               {phase === 'paused' && '已暂停'}
-              {phase === 'playing' && recState === 'listening' && (
+              {phase === 'playing' && skipping && `答案 · ${heardText || current.word}`}
+              {phase === 'playing' && !skipping && recState === 'listening' && (
                 <>
                   <span className="rec-dot" />
-                  正在录音，说完即评…
+                  大声说完…
                 </>
               )}
-              {phase === 'playing' && recState === 'scoring' && '说完了，正在评分…'}
+              {phase === 'playing' && !skipping && recState === 'scoring' && '评分中…'}
               {phase === 'playing' &&
+                !skipping &&
                 recState === 'idle' &&
-                (flash === 'pass' ? '过关' : flash === 'fail' ? '再试' : '准备')}
-            </div>
-
-            <div className="heard-box">
-              <div className="heard-label">结果</div>
-              <div
-                className={`heard-text ${
-                  flash === 'pass' ? 'ok' : flash === 'fail' ? 'bad' : ''
-                }`}
-              >
-                {phase === 'paused' ? '暂停中' : heardText || '…'}
-              </div>
+                (flash === 'pass'
+                  ? '对了！'
+                  : flash === 'fail'
+                    ? heardText || '再试一次'
+                    : '准备开口')}
             </div>
           </div>
         )}
@@ -900,129 +972,134 @@ export function Game() {
           <div className="pause-overlay" role="dialog" aria-modal="true" aria-label="暂停菜单">
             <div className="panel pause-panel">
               <h1>暂停</h1>
-              <p>
-                {level.name} · 已说对 {score} 张 · 剩余 {formatTime(timeLeft)}
+              <p className="pause-summary">
+                {level.name}
+                <br />
+                已说对 {score} 张 · 剩余 {formatTime(timeLeft)}
               </p>
-              <div className="home-cta-row">
+              <div className="pause-actions">
                 <button type="button" className="cta" onClick={resumeGame}>
                   继续游戏
                 </button>
-                <button type="button" className="cta ghost" onClick={goHome}>
+                <button type="button" className="text-link as-button" onClick={goHome}>
                   回到主页
                 </button>
               </div>
-              <p className="hint">按 Esc 也可继续</p>
+              <p className="hint">Esc 继续 · 对局中点「不会」可看答案并跳过</p>
             </div>
           </div>
         )}
 
         {phase === 'gameover' && (
           <div className="panel end-panel">
-            <h1>时间到</h1>
-            <p className="level-end-tag">{level.name}</p>
-            <p className="big-score">{score}</p>
-            <p>
-              {isNewBest && score > 0
-                ? `本机新纪录！${formatDurationLabel(durationMs)}说对了这么多张`
-                : `${formatDurationLabel(durationMs)}说对了这么多张`}
-            </p>
-            {isNewBest && score > 0 && <p className="new-best-tag">BEST</p>}
+            <div className="end-panel-top">
+              <h1>时间到</h1>
+              <p className="level-end-tag">{level.name}</p>
+              <p className="big-score">{score}</p>
+              <p className="end-summary">
+                {isNewBest && score > 0
+                  ? `本机新纪录！${formatDurationLabel(durationMs)}说对了这么多张`
+                  : `${formatDurationLabel(durationMs)}说对了这么多张`}
+              </p>
+              {isNewBest && score > 0 && <p className="new-best-tag">BEST</p>}
 
-            {current && (
-              <div className="missed-reveal">
-                <p className="missed-label">最后这张是</p>
-                <div className="word-card missed-card">
-                  <img src={current.image} alt="" draggable={false} />
-                  <div className="word-reveal">
-                    <span className="word-reveal-label">答案</span>
-                    <strong className="word-reveal-text">{current.word}</strong>
+              {current && (
+                <div className="missed-reveal">
+                  <p className="missed-label">最后这张是</p>
+                  <div className="word-card missed-card">
+                    <img src={current.image} alt="" draggable={false} />
+                    <div className="word-reveal">
+                      <span className="word-reveal-label">答案</span>
+                      <strong className="word-reveal-text">{current.word}</strong>
+                    </div>
                   </div>
                 </div>
+              )}
+
+              <div className="end-actions">
+                <div className="home-cta-row">
+                  <button type="button" className="cta" onClick={() => void startGame()}>
+                    再来一局
+                  </button>
+                  <button
+                    type="button"
+                    className="cta ghost"
+                    onClick={() => navigate('/')}
+                  >
+                    换关卡
+                  </button>
+                </div>
+                <div className="home-cta-row">
+                  <Link className="text-link" to="/leaderboard">
+                    排行榜
+                  </Link>
+                  <Link className="text-link" to="/">
+                    回首页
+                  </Link>
+                </div>
               </div>
-            )}
+            </div>
 
-            {globalRank != null && (
-              <p className="rank-line">
-                {nickname.trim() || '你'} · 全球第 {globalRank} 名
-              </p>
-            )}
-            <p className="hint lb-hint">{submitting ? '正在上传排行榜…' : lbStatus}</p>
+            <div className="end-panel-more">
+              {globalRank != null && (
+                <p className="rank-line">
+                  {nickname.trim() || '你'} · 全球第 {globalRank} 名
+                </p>
+              )}
+              <p className="hint lb-hint">{submitting ? '正在上传排行榜…' : lbStatus}</p>
 
-            <div className="leaderboard">
-              <div className="leaderboard-title">全球排行榜</div>
-              {leaderboard.length === 0 ? (
-                <p className="leaderboard-empty">暂无数据</p>
-              ) : (
-                <ol className="leaderboard-list">
-                  {leaderboard.slice(0, 10).map((row) => (
-                    <li
-                      key={row.nickname}
-                      className={
-                        row.nickname.toLowerCase() === nickname.trim().toLowerCase()
-                          ? 'me'
-                          : undefined
-                      }
-                    >
-                      <span className="lb-rank">#{row.rank}</span>
-                      <span className="lb-nick">{row.nickname}</span>
-                      <strong className="lb-score">{row.score}</strong>
+              <div className="leaderboard">
+                <div className="leaderboard-title">全球排行榜</div>
+                {leaderboard.length === 0 ? (
+                  <p className="leaderboard-empty">暂无数据</p>
+                ) : (
+                  <ol className="leaderboard-list">
+                    {leaderboard.slice(0, 5).map((row) => (
+                      <li
+                        key={row.nickname}
+                        className={
+                          row.nickname.toLowerCase() === nickname.trim().toLowerCase()
+                            ? 'me'
+                            : undefined
+                        }
+                      >
+                        <span className="lb-rank">#{row.rank}</span>
+                        <span className="lb-nick">{row.nickname}</span>
+                        <strong className="lb-score">{row.score}</strong>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </div>
+
+              <div className="record-strip compact">
+                <div className="record-pill">
+                  <span className="record-pill-label">本机最高</span>
+                  <span className="record-pill-value">{board.best}</span>
+                </div>
+                <div className="record-pill">
+                  <span className="record-pill-label">局数</span>
+                  <span className="record-pill-value">{board.gamesPlayed}</span>
+                </div>
+              </div>
+              {board.recent.length > 0 && (
+                <ol className="record-list">
+                  {board.recent.slice(0, 3).map((r, i) => (
+                    <li key={r.at} className={i === 0 ? 'latest' : undefined}>
+                      <span>{formatRecordTime(r.at)}</span>
+                      <strong>{r.score} 张</strong>
                     </li>
                   ))}
                 </ol>
               )}
             </div>
-
-            <div className="record-strip compact">
-              <div className="record-pill">
-                <span className="record-pill-label">本机最高</span>
-                <span className="record-pill-value">{board.best}</span>
-              </div>
-              <div className="record-pill">
-                <span className="record-pill-label">局数</span>
-                <span className="record-pill-value">{board.gamesPlayed}</span>
-              </div>
-            </div>
-            {board.recent.length > 0 && (
-              <ol className="record-list">
-                {board.recent.slice(0, 3).map((r, i) => (
-                  <li key={r.at} className={i === 0 ? 'latest' : undefined}>
-                    <span>{formatRecordTime(r.at)}</span>
-                    <strong>{r.score} 张</strong>
-                  </li>
-                ))}
-              </ol>
-            )}
-            <div className="home-cta-row">
-              <button type="button" className="cta" onClick={() => void startGame()}>
-                再来一局
-              </button>
-              <Link className="cta ghost" to="/leaderboard">
-                排行榜
-              </Link>
-            </div>
-            <div className="home-cta-row">
-              <button
-                type="button"
-                className="text-link as-button"
-                onClick={() => {
-                  setPhase('idle')
-                  setStatusText('换关再战？')
-                  setTimeLeft(level.durationMs)
-                }}
-              >
-                换关卡
-              </button>
-              <Link className="text-link" to="/">
-                回首页
-              </Link>
-            </div>
           </div>
         )}
       </main>
 
-      <footer className="footer">
-        <span className="status">{statusText}</span>
-        {inRound && <span className="status level-footer">{level.name}</span>}
+      <footer className={`footer${inRound ? ' footer-play' : ''}`}>
+        {!inRound && <span className="status">{statusText}</span>}
+        {inRound && <span className="status level-footer">{statusText}</span>}
       </footer>
     </div>
   )

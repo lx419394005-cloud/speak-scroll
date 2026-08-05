@@ -2,12 +2,13 @@ import { useEffect } from 'react'
 import { Link } from 'react-router-dom'
 
 const steps = [
-  { title: '选关', body: '首页可选奇兽 / 怪果 / 旅途三套主题词库。' },
+  { title: '选关', body: '奇兽 / 怪果 / 旅途看图说词；行囊是情景谜语（中文提示 + 插画）；乱斗是合集。' },
   { title: '看图', body: '卡片上只有滑稽插画，不显示英文单词。' },
   { title: '说词', body: '对着麦克风大声说完整单词；说完自动评分。' },
-  { title: '过关', body: '说对才翻下一张；说错同一张继续，直到说对或时间到。' },
+  { title: '过关', body: '说对才加分并翻下一张；说错同一张继续。' },
+  { title: '不会', body: '实在想不出可点「不会」：先揭晓英文，不计分，再进下一张。' },
   { title: '暂停', body: '对局中可点「暂停」或按 Esc；也可随时回主页。' },
-  { title: '冲榜', body: '限时内说对越多越好；时间到会显示最后一张的英文；破纪录按昵称上传全球排行榜。' },
+  { title: '冲榜', body: '限时内说对越多越好；破纪录按昵称上传全球排行榜。' },
 ]
 
 export function HowToPage() {

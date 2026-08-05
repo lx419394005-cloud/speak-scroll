@@ -9,7 +9,7 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/api/leaderboard': {
-        target: 'http://localhost:8787',
+        target: 'http://localhost:8788',
         changeOrigin: true,
       },
       '/api': {
