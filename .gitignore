@@ -8,6 +8,9 @@ worker/.dev.vars
 .env
 dist/
 client/dist/
+client/playwright-report/
+client/test-results/
+client/blob-report/
 .DS_Store
 *.log
 .DS_Store

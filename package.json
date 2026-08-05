@@ -10,7 +10,10 @@
     "build": "npm ci --prefix client && npm run build --prefix client",
     "deploy": "npm run build && npm run deploy --prefix worker",
     "deploy:cf": "bash ./scripts/cf-deploy.sh",
-    "deploy:leaderboard": "npm run deploy --prefix worker"
+    "deploy:leaderboard": "npm run deploy --prefix worker",
+    "test": "npm run test --prefix client",
+    "test:unit": "npm run test:unit --prefix client",
+    "test:e2e": "npm run test:e2e --prefix client"
   },
   "devDependencies": {
     "concurrently": "^10.0.4"

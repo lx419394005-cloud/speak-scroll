@@ -7,7 +7,11 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run && playwright test",
+    "test:unit": "vitest run",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
     "@types/node": "^24.13.3",
@@ -21,6 +25,8 @@
     "vite": "^8.2.0"
   },
   "devDependencies": {
-    "oxlint": "^1.75.0"
+    "@playwright/test": "^1.62.1",
+    "oxlint": "^1.75.0",
+    "vitest": "^4.1.10"
   }
 }
