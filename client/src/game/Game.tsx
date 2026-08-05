@@ -1,13 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   ATTEMPT_MAX_MS,
   FAIL_PAUSE_MS,
-  GAME_DURATION_MS,
   MIN_RECORD_MS,
   PASS_PAUSE_MS,
-  PASS_SCORE,
-  PASS_ACCURACY,
   SILENCE_END_MS,
   WORDS,
   type WordCard,
@@ -22,6 +19,17 @@ import {
   type IseResult,
 } from '../ise/client'
 import {
+  formatDurationLabel,
+  getLevel,
+  isLevelId,
+  LEVELS,
+  loadSelectedLevelId,
+  saveSelectedLevelId,
+  wordsForLevel,
+  type LevelConfig,
+  type LevelId,
+} from './levels'
+import {
   formatRecordTime,
   loadScoreBoard,
   saveGameScore,
@@ -35,7 +43,7 @@ import {
   type LeaderboardEntry,
 } from './leaderboard'
 
-type Phase = 'idle' | 'playing' | 'gameover'
+type Phase = 'idle' | 'playing' | 'paused' | 'gameover'
 type Flash = 'pass' | 'fail' | null
 type RecState = 'idle' | 'listening' | 'scoring'
 
@@ -63,13 +71,24 @@ function preloadImages(urls: string[]) {
   }
 }
 
+function resolveLevelId(param: string | null): LevelId {
+  if (isLevelId(param)) return param
+  return loadSelectedLevelId()
+}
+
 export function Game() {
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [levelId, setLevelId] = useState<LevelId>(() =>
+    resolveLevelId(searchParams.get('level')),
+  )
+  const level = getLevel(levelId)
+
   const [phase, setPhase] = useState<Phase>('idle')
   const [deck, setDeck] = useState<WordCard[]>([])
   const [index, setIndex] = useState(0)
   const [score, setScore] = useState(0)
-  const [timeLeft, setTimeLeft] = useState(GAME_DURATION_MS)
+  const [timeLeft, setTimeLeft] = useState(level.durationMs)
   const [flash, setFlash] = useState<Flash>(null)
   const [recState, setRecState] = useState<RecState>('idle')
   const [statusText, setStatusText] = useState('准备好了吗？')
@@ -94,11 +113,28 @@ export function Game() {
   const deckRef = useRef<WordCard[]>([])
   const scoreRef = useRef(0)
   const gameStartRef = useRef(0)
+  const pauseStartedRef = useRef(0)
   const endedRef = useRef(false)
+  const levelRef = useRef<LevelConfig>(level)
   /** 下一轮预连的 WebSocket，说完即可上传 */
   const warmPromiseRef = useRef<Promise<PreparedIse | null> | null>(null)
 
   const current = deck[index]
+
+  useEffect(() => {
+    levelRef.current = level
+  }, [level])
+
+  const pickLevel = useCallback(
+    (id: LevelId) => {
+      if (phase === 'playing' || phase === 'paused') return
+      setLevelId(id)
+      saveSelectedLevelId(id)
+      setTimeLeft(getLevel(id).durationMs)
+      setSearchParams({ level: id }, { replace: true })
+    },
+    [phase, setSearchParams],
+  )
 
   const closeWarm = useCallback(() => {
     const pending = warmPromiseRef.current
@@ -258,7 +294,8 @@ export function Game() {
   useEffect(() => {
     if (phase !== 'playing') return
     const tick = window.setInterval(() => {
-      const left = Math.max(0, GAME_DURATION_MS - (performance.now() - gameStartRef.current))
+      const duration = levelRef.current.durationMs
+      const left = Math.max(0, duration - (performance.now() - gameStartRef.current))
       setTimeLeft(left)
       if (left <= 0) endGame()
     }, 100)
@@ -272,7 +309,7 @@ export function Game() {
     let nextIndex = indexRef.current + 1
     let nextDeck = deckRef.current
     if (nextIndex >= nextDeck.length) {
-      nextDeck = shuffle(WORDS)
+      nextDeck = shuffle(wordsForLevel(levelRef.current))
       deckRef.current = nextDeck
       setDeck(nextDeck)
       nextIndex = 0
@@ -391,8 +428,8 @@ export function Game() {
     })
 
     const { ok: passed, reason } = isPronunciationPass(result, {
-      passScore: PASS_SCORE,
-      passAccuracy: PASS_ACCURACY,
+      passScore: levelRef.current.passScore,
+      passAccuracy: levelRef.current.passAccuracy,
     })
 
     console.log('[ise][pass-result]', { passed, reason })
@@ -479,6 +516,35 @@ export function Game() {
     }
   }, [phase, runOneAttempt, applyResult, advanceCard, closeWarm])
 
+  const pauseGame = useCallback(() => {
+    if (phase !== 'playing' || endedRef.current) return
+    pauseStartedRef.current = performance.now()
+    abortRef.current?.abort()
+    recorderRef.current?.stopCapture()
+    setRecState('idle')
+    setMicLevel(0)
+    setFlash(null)
+    setPhase('paused')
+    setStatusText('已暂停')
+  }, [phase])
+
+  const resumeGame = useCallback(() => {
+    if (phase !== 'paused' || endedRef.current) return
+    const pausedFor = performance.now() - pauseStartedRef.current
+    gameStartRef.current += pausedFor
+    setPhase('playing')
+    setStatusText('继续说…')
+  }, [phase])
+
+  const goHome = useCallback(() => {
+    endedRef.current = true
+    sessionRef.current += 1
+    abortRef.current?.abort()
+    void cleanupMic().finally(() => {
+      navigate('/')
+    })
+  }, [cleanupMic, navigate])
+
   const startGame = async () => {
     const nick = nickname.trim()
     if (!nick) {
@@ -490,6 +556,7 @@ export function Game() {
       return
     }
     saveNickname(nick)
+    saveSelectedLevelId(levelId)
     setStatusText('正在开启麦克风…')
     try {
       sessionRef.current += 1
@@ -505,7 +572,10 @@ export function Game() {
       void fetch('/api/ise-auth').catch(() => null)
       armWarm()
 
-      const nextDeck = shuffle(WORDS)
+      const active = getLevel(levelId)
+      levelRef.current = active
+      const pool = wordsForLevel(active)
+      const nextDeck = shuffle(pool)
       deckRef.current = nextDeck
       indexRef.current = 0
       scoreRef.current = 0
@@ -518,7 +588,7 @@ export function Game() {
       setDeck(nextDeck)
       setIndex(0)
       setScore(0)
-      setTimeLeft(GAME_DURATION_MS)
+      setTimeLeft(active.durationMs)
       setFlash(null)
       setHeardText('')
       setEnterAnim(true)
@@ -532,11 +602,35 @@ export function Game() {
     }
   }
 
-  const progress = timeLeft / GAME_DURATION_MS
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      if (phase === 'playing') {
+        e.preventDefault()
+        pauseGame()
+      } else if (phase === 'paused') {
+        e.preventDefault()
+        resumeGame()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [phase, pauseGame, resumeGame])
+
+  const durationMs = level.durationMs
+  const progress = timeLeft / durationMs
   const urgency = progress < 0.25
+  const inRound = phase === 'playing' || phase === 'paused'
 
   const formatTime = (ms: number) => {
     const total = Math.ceil(ms / 1000)
+    const m = Math.floor(total / 60)
+    const s = total % 60
+    return `${m}:${s.toString().padStart(2, '0')}`
+  }
+
+  const idleTimeLabel = () => {
+    const total = Math.round(durationMs / 1000)
     const m = Math.floor(total / 60)
     const s = total % 60
     return `${m}:${s.toString().padStart(2, '0')}`
@@ -547,36 +641,64 @@ export function Game() {
       className={`game ${flash ? `flash-${flash}` : ''} ${urgency && phase === 'playing' ? 'urgent' : ''}`}
     >
       <header className="hud">
-        {phase === 'playing' ? (
+        {inRound ? (
           <div className="brand">Speak Scroll</div>
         ) : (
           <Link to="/" className="brand">
             Speak Scroll
           </Link>
         )}
-        <div className="hud-stats">
-          <div className="stat">
-            <span className="stat-label">说对</span>
-            <span className="stat-value">{score}</span>
+        <div className="hud-right">
+          <div className="hud-stats">
+            <div className="stat">
+              <span className="stat-label">关卡</span>
+              <span className="stat-value level-stat">{level.order}</span>
+            </div>
+            <div className="stat">
+              <span className="stat-label">说对</span>
+              <span className="stat-value">{score}</span>
+            </div>
+            <div className="stat">
+              <span className="stat-label">最高</span>
+              <span className="stat-value">{board.best}</span>
+            </div>
+            <div className="stat">
+              <span className="stat-label">剩余</span>
+              <span className="stat-value timer-stat">
+                {inRound || phase === 'gameover' ? formatTime(timeLeft) : idleTimeLabel()}
+              </span>
+            </div>
           </div>
-          <div className="stat">
-            <span className="stat-label">最高</span>
-            <span className="stat-value">{board.best}</span>
-          </div>
-          <div className="stat">
-            <span className="stat-label">剩余</span>
-            <span className="stat-value timer-stat">
-              {phase === 'playing' || phase === 'gameover' ? formatTime(timeLeft) : '1:00'}
-            </span>
-          </div>
+          {inRound && (
+            <div className="hud-actions">
+              {phase === 'playing' ? (
+                <button type="button" className="hud-btn" onClick={pauseGame}>
+                  暂停
+                </button>
+              ) : (
+                <button type="button" className="hud-btn" onClick={resumeGame}>
+                  继续
+                </button>
+              )}
+              <button type="button" className="hud-btn ghost" onClick={goHome}>
+                主页
+              </button>
+            </div>
+          )}
         </div>
       </header>
 
-      <div className="timer-track" aria-hidden={phase !== 'playing'}>
+      <div className="timer-track" aria-hidden={!inRound}>
         <div
           className="timer-fill"
           style={{
-            transform: `scaleX(${phase === 'playing' ? progress : phase === 'gameover' ? 0 : 1})`,
+            transform: `scaleX(${
+              phase === 'playing' || phase === 'paused'
+                ? progress
+                : phase === 'gameover'
+                  ? 0
+                  : 1
+            })`,
           }}
         />
       </div>
@@ -599,8 +721,35 @@ export function Game() {
             <h1>准备开麦</h1>
             <p>
               你好，<strong>{nickname.trim() || '玩家'}</strong>
-              。看图说词，1 分钟冲榜。
+              。选好关卡再开麦。
             </p>
+
+            <fieldset className="level-picker compact">
+              <legend>选择关卡</legend>
+              <div className="level-grid" role="radiogroup" aria-label="关卡">
+                {LEVELS.map((item) => {
+                  const active = item.id === levelId
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      className={`level-card${active ? ' active' : ''}`}
+                      onClick={() => pickLevel(item.id)}
+                    >
+                      <span className="level-order">第 {item.order} 关</span>
+                      <strong className="level-title">{item.title}</strong>
+                      <span className="level-blurb">{item.blurb}</span>
+                      <span className="level-meta">
+                        {formatDurationLabel(item.durationMs)}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            </fieldset>
+
             <div className="record-strip compact">
               <div className="record-pill">
                 <span className="record-pill-label">本机最高</span>
@@ -612,11 +761,11 @@ export function Game() {
               </div>
             </div>
             <button type="button" className="cta" onClick={() => void startGame()}>
-              开麦开玩
+              开麦 · {level.name}
             </button>
             <div className="home-cta-row">
               <Link className="text-link" to="/">
-                改昵称
+                回首页
               </Link>
               <Link className="text-link" to="/leaderboard">
                 排行榜
@@ -629,8 +778,8 @@ export function Game() {
           </div>
         )}
 
-        {phase === 'playing' && current && (
-          <div className="play-area">
+        {(phase === 'playing' || phase === 'paused') && current && (
+          <div className={`play-area${phase === 'paused' ? ' is-paused' : ''}`}>
             <div key={slideKey} className="card-rail">
               <div
                 className={`word-card ${enterAnim ? 'rush-in' : ''} ${flash === 'fail' ? 'shake-card' : ''}`}
@@ -656,15 +805,17 @@ export function Game() {
               </div>
             </div>
 
-            <div className={`rec-badge ${recState}`}>
-              {recState === 'listening' && (
+            <div className={`rec-badge ${phase === 'paused' ? 'paused' : recState}`}>
+              {phase === 'paused' && '已暂停'}
+              {phase === 'playing' && recState === 'listening' && (
                 <>
                   <span className="rec-dot" />
                   正在录音，说完即评…
                 </>
               )}
-              {recState === 'scoring' && '说完了，正在评分…'}
-              {recState === 'idle' &&
+              {phase === 'playing' && recState === 'scoring' && '说完了，正在评分…'}
+              {phase === 'playing' &&
+                recState === 'idle' &&
                 (flash === 'pass' ? '过关' : flash === 'fail' ? '再试' : '准备')}
             </div>
 
@@ -675,8 +826,28 @@ export function Game() {
                   flash === 'pass' ? 'ok' : flash === 'fail' ? 'bad' : ''
                 }`}
               >
-                {heardText || '…'}
+                {phase === 'paused' ? '暂停中' : heardText || '…'}
               </div>
+            </div>
+          </div>
+        )}
+
+        {phase === 'paused' && (
+          <div className="pause-overlay" role="dialog" aria-modal="true" aria-label="暂停菜单">
+            <div className="panel pause-panel">
+              <h1>暂停</h1>
+              <p>
+                {level.name} · 已说对 {score} 张 · 剩余 {formatTime(timeLeft)}
+              </p>
+              <div className="home-cta-row">
+                <button type="button" className="cta" onClick={resumeGame}>
+                  继续游戏
+                </button>
+                <button type="button" className="cta ghost" onClick={goHome}>
+                  回到主页
+                </button>
+              </div>
+              <p className="hint">按 Esc 也可继续</p>
             </div>
           </div>
         )}
@@ -684,11 +855,12 @@ export function Game() {
         {phase === 'gameover' && (
           <div className="panel end-panel">
             <h1>时间到</h1>
+            <p className="level-end-tag">{level.name}</p>
             <p className="big-score">{score}</p>
             <p>
               {isNewBest && score > 0
-                ? '本机新纪录！1 分钟说对了这么多张'
-                : '1 分钟说对了这么多张'}
+                ? `本机新纪录！${formatDurationLabel(durationMs)}说对了这么多张`
+                : `${formatDurationLabel(durationMs)}说对了这么多张`}
             </p>
             {isNewBest && score > 0 && <p className="new-best-tag">BEST</p>}
             {globalRank != null && (
@@ -750,15 +922,29 @@ export function Game() {
                 排行榜
               </Link>
             </div>
-            <Link className="text-link" to="/">
-              回首页
-            </Link>
+            <div className="home-cta-row">
+              <button
+                type="button"
+                className="text-link as-button"
+                onClick={() => {
+                  setPhase('idle')
+                  setStatusText('换关再战？')
+                  setTimeLeft(level.durationMs)
+                }}
+              >
+                换关卡
+              </button>
+              <Link className="text-link" to="/">
+                回首页
+              </Link>
+            </div>
           </div>
         )}
       </main>
 
       <footer className="footer">
         <span className="status">{statusText}</span>
+        {inRound && <span className="status level-footer">{level.name}</span>}
       </footer>
     </div>
   )

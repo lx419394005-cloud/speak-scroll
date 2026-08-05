@@ -2,10 +2,12 @@ import { useEffect } from 'react'
 import { Link } from 'react-router-dom'
 
 const steps = [
+  { title: '选关', body: '首页可选启蒙 / 冲刺 / 怪词三关，词库与时长不同。' },
   { title: '看图', body: '卡片上只有滑稽插画，不显示英文单词。' },
   { title: '说词', body: '对着麦克风大声说完整单词；说完自动评分。' },
   { title: '过关', body: '说对才翻下一张；说错同一张继续，直到说对或时间到。' },
-  { title: '冲榜', body: '1 分钟内说对越多越好；破纪录会按昵称上传全球排行榜。' },
+  { title: '暂停', body: '对局中可点「暂停」或按 Esc；也可随时回主页。' },
+  { title: '冲榜', body: '限时内说对越多越好；破纪录会按昵称上传全球排行榜。' },
 ]
 
 export function HowToPage() {
