@@ -199,7 +199,7 @@ Cloudflare Dashboard → Workers & Pages → `speak-scroll` → Settings → Dom
 
 ```bash
 npm run dev
-# client :5173  |  express ise-auth :8790  |  worker/D1 :8787
+# client :5180  |  express ise-auth :8790  |  worker/D1 :8787
 ```
 
 若要用「接近线上」的一体 Worker（需先 `npm run build --prefix client`）：

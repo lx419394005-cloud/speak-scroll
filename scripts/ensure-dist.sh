@@ -9,7 +9,7 @@ if [[ ! -f "$DIST/index.html" ]]; then
 <!doctype html>
 <html lang="zh-CN">
   <head><meta charset="utf-8" /><title>Speak Scroll</title></head>
-  <body>dev placeholder — use Vite on :5173</body>
+  <body>dev placeholder — use Vite on :5180</body>
 </html>
 HTML
   echo "[dev] created $DIST/index.html"

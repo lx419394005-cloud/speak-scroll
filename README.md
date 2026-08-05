@@ -35,7 +35,7 @@ npm install
 npm run dev
 ```
 
-- 前端：http://localhost:5173
+- 前端：http://localhost:5180
 - 鉴权服务：http://localhost:8790
 - 排行榜 Worker：http://localhost:8787
 
