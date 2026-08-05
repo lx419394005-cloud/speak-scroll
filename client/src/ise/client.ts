@@ -362,45 +362,26 @@ export function trimPcmSilence(pcm: Int16Array): Int16Array {
   return pcm.subarray(start)
 }
 
-function buildFrames(pcmBytes: Uint8Array): Uint8Array[] {
-  const frames: Uint8Array[] = []
-  for (let offset = 0; offset < pcmBytes.length; offset += UPLOAD_FRAME_BYTES) {
-    const slice = pcmBytes.subarray(offset, offset + UPLOAD_FRAME_BYTES)
-    if (slice.length === UPLOAD_FRAME_BYTES) {
-      frames.push(slice.slice())
-    } else {
-      const last = new Uint8Array(slice.length < FRAME_BYTES ? FRAME_BYTES : slice.length)
-      last.set(slice)
-      frames.push(last)
-    }
-  }
-  if (frames.length === 0) frames.push(new Uint8Array(FRAME_BYTES))
-  return frames
+/**
+ * 边录边传：录音过程中把 PCM 推上已预连的 WebSocket，说完立刻收尾等分。
+ * 比「录完再整包上传」少一段说完后的空等。
+ */
+export type LiveIseUpload = {
+  push: (chunk: Int16Array) => void
+  finish: () => Promise<IseResult>
+  cancel: () => void
 }
 
-/**
- * 本地录完后立刻上传。优先使用录音期预连好的 WebSocket。
- */
-export async function evaluateRecordedWord(options: {
+export async function startLiveIseUpload(options: {
   word: string
-  pcm: Int16Array
   prepared?: PreparedIse | null
   auth?: IseAuth
   signal?: AbortSignal
-}): Promise<IseResult> {
-  const pcm = trimPcmSilence(options.pcm)
-  if (pcm.length < 1600) {
-    throw new Error('录音太短，请再说一次')
-  }
+}): Promise<LiveIseUpload> {
   if (options.signal?.aborted) throw new Error('Aborted')
-
-  const t0 = performance.now()
-  const pcmBytes = pcmToBytes(pcm)
-  const frames = buildFrames(pcmBytes)
 
   let ws: WebSocket
   let auth: IseAuth
-  let ownsSocket = false
 
   if (options.prepared && options.prepared.ws.readyState === WebSocket.OPEN) {
     ws = options.prepared.ws
@@ -408,7 +389,6 @@ export async function evaluateRecordedWord(options: {
   } else {
     auth = options.auth ?? (await fetchIseAuth())
     if (options.signal?.aborted) throw new Error('Aborted')
-    ownsSocket = true
     ws = await new Promise<WebSocket>((resolve, reject) => {
       const socket = new WebSocket(auth.url)
       const t = window.setTimeout(() => {
@@ -426,160 +406,234 @@ export async function evaluateRecordedWord(options: {
     })
   }
 
-  console.debug('[ise] upload start', {
-    samples: pcm.length,
-    frames: frames.length,
-    connectMs: Math.round(performance.now() - t0),
+  const t0 = performance.now()
+  let pending = new Uint8Array(0)
+  let sentFirst = false
+  let ssbSent = false
+  let finished = false
+  let cancelled = false
+  let settled = false
+  let closedByUs = false
+  let finalTimer: number | null = null
+  let resultPromise: Promise<IseResult> | null = null
+  let resolveResult: ((r: IseResult) => void) | null = null
+  let rejectResult: ((e: Error) => void) | null = null
+
+  const fail = (err: Error) => {
+    if (settled) return
+    settled = true
+    cancelled = true
+    if (finalTimer != null) window.clearTimeout(finalTimer)
+    closedByUs = true
+    try {
+      ws.close()
+    } catch {
+      /* ignore */
+    }
+    rejectResult?.(err)
+  }
+
+  const onAbort = () => fail(new Error('Aborted'))
+  options.signal?.addEventListener('abort', onAbort, { once: true })
+
+  resultPromise = new Promise<IseResult>((resolve, reject) => {
+    resolveResult = resolve
+    rejectResult = reject
   })
 
-  return new Promise((resolve, reject) => {
-    let settled = false
-    let closedByUs = false
-    let finalTimer: number | null = null
+  const sendAudioFrame = (frame: Uint8Array, aus: 1 | 2 | 4, status: 1 | 2) => {
+    ws.send(
+      JSON.stringify({
+        business: { cmd: 'auw', aus, aue: 'raw' },
+        data: {
+          status,
+          data: bytesToBase64(frame),
+          data_type: 1,
+          encoding: 'raw',
+        },
+      }),
+    )
+  }
 
-    const finish = (fn: () => void) => {
-      if (settled) return
+  const ensureSsb = () => {
+    if (ssbSent || cancelled) return
+    ssbSent = true
+    // 去掉 multi_dimension，只要总分/准确度，评测更快
+    ws.send(
+      JSON.stringify({
+        common: { app_id: auth.appId },
+        business: {
+          sub: 'ise',
+          ent: 'en_vip',
+          category: 'read_word',
+          cmd: 'ssb',
+          auf: 'audio/L16;rate=16000',
+          aue: 'raw',
+          tte: 'utf-8',
+          ttp_skip: true,
+          text: buildWordPaper(options.word),
+          rstcd: 'utf8',
+          rst: 'entirety',
+          ise_unite: '1',
+        },
+        data: {
+          status: 0,
+          data: '',
+          data_type: 1,
+          encoding: 'raw',
+        },
+      }),
+    )
+  }
+
+  const flushFullFrames = () => {
+    while (pending.byteLength >= UPLOAD_FRAME_BYTES) {
+      ensureSsb()
+      const frame = pending.subarray(0, UPLOAD_FRAME_BYTES)
+      pending = pending.subarray(UPLOAD_FRAME_BYTES)
+      if (!sentFirst) {
+        sendAudioFrame(frame.slice(), 1, 1)
+        sentFirst = true
+      } else {
+        sendAudioFrame(frame.slice(), 2, 1)
+      }
+    }
+  }
+
+  ws.onmessage = (event) => {
+    if (settled) return
+    try {
+      const msg = JSON.parse(String(event.data)) as {
+        code?: number
+        message?: string
+        data?: { data?: string; status?: number | string }
+        status?: number | string
+      }
+
+      if (msg.code !== undefined && msg.code !== 0) {
+        fail(new Error(msg.message || `ISE error ${msg.code}`))
+        return
+      }
+
+      const status = Number(msg.data?.status ?? msg.status)
+      if (status !== 2 || !msg.data?.data) return
+
+      const xml = decodeBase64Utf8(msg.data.data)
+      const parsed = parseIseXml(xml)
+      console.log('[ise][live-parsed]', {
+        content: parsed.content,
+        totalScore: parsed.totalScore,
+        accuracyScore: parsed.accuracyScore,
+        roundtripMs: Math.round(performance.now() - t0),
+      })
+
       settled = true
       if (finalTimer != null) window.clearTimeout(finalTimer)
-      fn()
-    }
-
-    const fail = (err: Error) => {
       closedByUs = true
+      options.signal?.removeEventListener('abort', onAbort)
       try {
         ws.close()
       } catch {
         /* ignore */
       }
-      finish(() => reject(err))
+      resolveResult?.({ ...parsed, rawXml: xml })
+    } catch (err) {
+      fail(err instanceof Error ? err : new Error('Bad ISE response'))
     }
+  }
 
-    const onAbort = () => fail(new Error('Aborted'))
-    options.signal?.addEventListener('abort', onAbort, { once: true })
-
-    const sendAudioFrame = (frame: Uint8Array, aus: 1 | 2 | 4, status: 1 | 2) => {
-      ws.send(
-        JSON.stringify({
-          business: { cmd: 'auw', aus, aue: 'raw' },
-          data: {
-            status,
-            data: bytesToBase64(frame),
-            data_type: 1,
-            encoding: 'raw',
-          },
-        }),
-      )
+  ws.onerror = () => fail(new Error('WebSocket error'))
+  ws.onclose = () => {
+    options.signal?.removeEventListener('abort', onAbort)
+    if (!settled && !closedByUs) {
+      fail(new Error('WebSocket closed before result'))
     }
+  }
 
-    const uploadAll = () => {
-      // 英文百分制：必须 ise_unite=1 + entirety（去掉音素细项以保速度）
-      ws.send(
-        JSON.stringify({
-          common: { app_id: auth.appId },
-          business: {
-            sub: 'ise',
-            ent: 'en_vip',
-            category: 'read_word',
-            cmd: 'ssb',
-            auf: 'audio/L16;rate=16000',
-            aue: 'raw',
-            tte: 'utf-8',
-            ttp_skip: true,
-            text: buildWordPaper(options.word),
-            rstcd: 'utf8',
-            rst: 'entirety',
-            ise_unite: '1',
-            extra_ability: 'multi_dimension',
-          },
-          data: {
-            status: 0,
-            data: '',
-            data_type: 1,
-            encoding: 'raw',
-          },
-        }),
-      )
+  return {
+    push(chunk: Int16Array) {
+      if (cancelled || finished || chunk.length === 0) return
+      const bytes = pcmToBytes(chunk)
+      const merged = new Uint8Array(pending.byteLength + bytes.byteLength)
+      merged.set(pending, 0)
+      merged.set(bytes, pending.byteLength)
+      pending = merged
+      flushFullFrames()
+    },
+    finish() {
+      if (cancelled) return Promise.reject(new Error('Aborted'))
+      if (finished) return resultPromise!
+      finished = true
 
-      if (frames.length === 1) {
-        sendAudioFrame(frames[0]!, 1, 1)
+      ensureSsb()
+
+      // 尾包：不足一帧也发出去
+      const tail =
+        pending.byteLength > 0
+          ? pending
+          : new Uint8Array(FRAME_BYTES)
+      pending = new Uint8Array(0)
+
+      const last =
+        tail.byteLength === UPLOAD_FRAME_BYTES || tail.byteLength >= FRAME_BYTES
+          ? tail
+          : (() => {
+              const padded = new Uint8Array(Math.max(FRAME_BYTES, tail.byteLength))
+              padded.set(tail)
+              return padded
+            })()
+
+      if (!sentFirst) {
+        // 整段很短：先 aus=1 再空 aus=4
+        sendAudioFrame(last.slice(), 1, 1)
         sendAudioFrame(new Uint8Array(FRAME_BYTES), 4, 2)
       } else {
-        sendAudioFrame(frames[0]!, 1, 1)
-        for (let i = 1; i < frames.length - 1; i += 1) {
-          sendAudioFrame(frames[i]!, 2, 1)
-        }
-        sendAudioFrame(frames[frames.length - 1]!, 4, 2)
+        sendAudioFrame(last.slice(), 4, 2)
       }
+
+      console.debug('[ise] live finish', {
+        roundtripMs: Math.round(performance.now() - t0),
+      })
 
       finalTimer = window.setTimeout(() => {
         if (!settled) fail(new Error('评测超时'))
-      }, 6000)
-    }
+      }, 5000)
 
-    ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(String(event.data)) as {
-          code?: number
-          message?: string
-          data?: { data?: string; status?: number | string }
-          status?: number | string
-        }
+      return resultPromise!
+    },
+    cancel() {
+      fail(new Error('Aborted'))
+    },
+  }
+}
 
-        if (msg.code !== undefined && msg.code !== 0) {
-          fail(new Error(msg.message || `ISE error ${msg.code}`))
-          return
-        }
-
-        const status = Number(msg.data?.status ?? msg.status)
-        if (status !== 2 || !msg.data?.data) return
-
-        const xml = decodeBase64Utf8(msg.data.data)
-        const parsed = parseIseXml(xml)
-        console.log('[ise][parsed]', {
-          content: parsed.content,
-          totalScore: parsed.totalScore,
-          accuracyScore: parsed.accuracyScore,
-          standardScore: parsed.standardScore,
-          syllAvgScore: parsed.syllAvgScore,
-          phoneOkRate: parsed.phoneOkRate,
-          phoneErrorSummary: parsed.phoneErrorSummary,
-          exceptInfo: parsed.exceptInfo,
-          isRejected: parsed.isRejected,
-          hasPronError: parsed.hasPronError,
-          hasSyllError: parsed.hasSyllError,
-          hasPhoneError: parsed.hasPhoneError,
-          roundtripMs: Math.round(performance.now() - t0),
-        })
-
-        closedByUs = true
-        ws.close()
-        finish(() => resolve({ ...parsed, rawXml: xml }))
-      } catch (err) {
-        fail(err instanceof Error ? err : new Error('Bad ISE response'))
-      }
-    }
-
-    ws.onerror = () => fail(new Error('WebSocket error'))
-    ws.onclose = () => {
-      options.signal?.removeEventListener('abort', onAbort)
-      if (!settled && !closedByUs) {
-        fail(new Error('WebSocket closed before result'))
-      }
-    }
-
-    try {
-      uploadAll()
-    } catch (err) {
-      if (ownsSocket) {
-        try {
-          ws.close()
-        } catch {
-          /* ignore */
-        }
-      }
-      fail(err instanceof Error ? err : new Error('Upload failed'))
-    }
+/**
+ * 本地录完后整包上传（live 失败时的兜底）。
+ */
+export async function evaluateRecordedWord(options: {
+  word: string
+  pcm: Int16Array
+  prepared?: PreparedIse | null
+  auth?: IseAuth
+  signal?: AbortSignal
+}): Promise<IseResult> {
+  const pcm = trimPcmSilence(options.pcm)
+  if (pcm.length < 1600) {
+    throw new Error('录音太短，请再说一次')
+  }
+  const upload = await startLiveIseUpload({
+    word: options.word,
+    prepared: options.prepared,
+    auth: options.auth,
+    signal: options.signal,
   })
+  try {
+    upload.push(pcm)
+    return await upload.finish()
+  } catch (err) {
+    upload.cancel()
+    throw err
+  }
 }
 
 /** 本地录音缓冲 */

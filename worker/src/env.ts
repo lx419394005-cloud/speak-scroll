@@ -1,6 +1,8 @@
 export type Env = {
   DB: D1Database
   ASSETS: Fetcher
+  /** 词图对象存储：key = words/*.webp */
+  WORDS: R2Bucket
   XFYUN_APP_ID: string
   XFYUN_API_KEY: string
   XFYUN_API_SECRET: string

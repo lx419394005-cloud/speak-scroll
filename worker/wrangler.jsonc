@@ -7,13 +7,19 @@
     "directory": "../client/dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"]
+    "run_worker_first": ["/api/*", "/words/*"]
   },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "speak-scroll",
       "database_id": "21c83a58-64e2-40d1-85e0-9777359739b4"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "WORDS",
+      "bucket_name": "speak-scroll-words"
     }
   ],
   "observability": {

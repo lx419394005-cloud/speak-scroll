@@ -67,6 +67,9 @@ PY
 echo "==> 远程建表"
 "${W[@]}" d1 execute speak-scroll --remote --file=./migrations/0001_init.sql
 
+echo "==> 创建 / 复用 R2 词图桶"
+"${W[@]}" r2 bucket create speak-scroll-words 2>/dev/null || true
+
 echo "==> 写入讯飞 Secrets"
 if [[ -f .env ]]; then
   set -a
@@ -83,6 +86,10 @@ printf '%s' "$XFYUN_API_SECRET" | "${W[@]}" secret put XFYUN_API_SECRET
 
 echo "==> 构建前端并部署"
 npm run build --prefix client
+# 词图改走 R2，不塞进 Workers Assets
+rm -rf "$ROOT/client/dist/words"
+bash "$ROOT/scripts/upload-words-r2.sh"
 "${W[@]}" deploy --name speak-scroll
 
 echo "==> 完成。打开上面打印的 workers.dev 链接即可。"
+echo "    词图：https://…/words/<id>.webp （R2，经 Worker）"

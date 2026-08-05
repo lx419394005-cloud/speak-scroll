@@ -1,6 +1,7 @@
 import { corsHeaders, json, type Env } from './env'
 import { handleHealth, handleIseAuth } from './ise-auth'
 import { handleLeaderboard } from './leaderboard'
+import { handleWords } from './words'
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -20,6 +21,9 @@ export default {
       if (url.pathname === '/api/leaderboard') {
         return handleLeaderboard(request, env)
       }
+
+      const wordRes = await handleWords(request, env, url.pathname)
+      if (wordRes) return wordRes
 
       if (url.pathname.startsWith('/api/')) {
         return json({ error: 'Not found' }, 404)

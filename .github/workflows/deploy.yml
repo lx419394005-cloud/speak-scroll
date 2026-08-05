@@ -34,6 +34,15 @@ jobs:
       - name: Build client
         run: npm run build --prefix client
 
+      - name: Strip word images from assets (served via R2)
+        run: rm -rf client/dist/words
+
+      - name: Upload word images to R2
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: bash ./scripts/upload-words-r2.sh
+
       - name: Deploy Worker
         working-directory: worker
         env:
