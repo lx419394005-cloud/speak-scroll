@@ -44,6 +44,81 @@ export type MicRecorder = {
   getLevel: () => number
 }
 
+/** 无硬件麦克风时可用：URL 加 `?mockMic=1` 进入假麦，方便测暂停/回主页等 UI */
+export function wantsMockMic(): boolean {
+  try {
+    const q = new URLSearchParams(window.location.search)
+    const v = q.get('mockMic')
+    return v === '1' || v === 'true'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 合成假麦克风：周期性“说话”音量 + PCM，不调用 getUserMedia。
+ * 仅用于本机/云端无麦时的 UI 联调，不走真实评测效果。
+ */
+export async function createMockMicRecorder(
+  onPcm: (chunk: Int16Array) => void,
+): Promise<MicRecorder> {
+  let capturing = false
+  let latestRms = 0
+  let latestLevel = 0
+  let tick = 0
+  let phase = 0
+  const sampleRate = 16000
+  const frameSamples = 1024
+
+  tick = window.setInterval(() => {
+    // 约 2.2s 周期：先响后静，触发静音结束逻辑
+    const cycle = (performance.now() / 2200) % 1
+    const speaking = cycle < 0.45
+    const amp = speaking ? 0.22 : 0.002
+    latestRms = amp * 0.7
+    latestLevel = speaking ? Math.min(1, amp * 3.2) : 0.02
+
+    if (!capturing) return
+
+    const pcm = new Int16Array(frameSamples)
+    for (let i = 0; i < frameSamples; i += 1) {
+      phase += (440 * Math.PI * 2) / sampleRate
+      const sample = Math.sin(phase) * amp
+      pcm[i] = Math.max(-1, Math.min(1, sample)) * 0x7fff
+    }
+    onPcm(pcm)
+  }, 64)
+
+  return {
+    startCapture: async () => {
+      capturing = true
+    },
+    stopCapture: () => {
+      capturing = false
+      latestRms = 0
+      latestLevel = 0
+    },
+    getRms: () => latestRms,
+    getLevel: () => latestLevel,
+    close: async () => {
+      capturing = false
+      window.clearInterval(tick)
+      latestRms = 0
+      latestLevel = 0
+    },
+  }
+}
+
+export async function createGameMicRecorder(
+  onPcm: (chunk: Int16Array) => void,
+): Promise<MicRecorder> {
+  if (wantsMockMic()) {
+    console.info('[mic] using mockMic=1 synthetic recorder')
+    return createMockMicRecorder(onPcm)
+  }
+  return createMicRecorder(onPcm)
+}
+
 export async function createMicRecorder(
   onPcm: (chunk: Int16Array) => void,
 ): Promise<MicRecorder> {

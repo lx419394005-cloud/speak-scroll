@@ -9,7 +9,7 @@ import {
   WORDS,
   type WordCard,
 } from '../data/words'
-import { createMicRecorder, type MicRecorder } from '../ise/audio'
+import { createGameMicRecorder, type MicRecorder, wantsMockMic } from '../ise/audio'
 import {
   createPcmQueue,
   evaluateRecordedWord,
@@ -131,9 +131,11 @@ export function Game() {
       setLevelId(id)
       saveSelectedLevelId(id)
       setTimeLeft(getLevel(id).durationMs)
-      setSearchParams({ level: id }, { replace: true })
+      const next = new URLSearchParams(searchParams)
+      next.set('level', id)
+      setSearchParams(next, { replace: true })
     },
-    [phase, setSearchParams],
+    [phase, searchParams, setSearchParams],
   )
 
   const closeWarm = useCallback(() => {
@@ -457,7 +459,7 @@ export function Game() {
     void (async () => {
       try {
         if (!recorderRef.current) {
-          recorderRef.current = await createMicRecorder((chunk) => {
+          recorderRef.current = await createGameMicRecorder((chunk) => {
             queueRef.current.push(chunk)
           })
         }
@@ -557,13 +559,13 @@ export function Game() {
     }
     saveNickname(nick)
     saveSelectedLevelId(levelId)
-    setStatusText('正在开启麦克风…')
+    setStatusText(wantsMockMic() ? '假麦模式开启…' : '正在开启麦克风…')
     try {
       sessionRef.current += 1
       endedRef.current = false
       await cleanupMic()
       queueRef.current = createPcmQueue()
-      recorderRef.current = await createMicRecorder((chunk) => {
+      recorderRef.current = await createGameMicRecorder((chunk) => {
         queueRef.current.push(chunk)
       })
       recorderRef.current.stopCapture()
@@ -763,6 +765,9 @@ export function Game() {
             <button type="button" className="cta" onClick={() => void startGame()}>
               开麦 · {level.name}
             </button>
+            {wantsMockMic() && (
+              <p className="hint mock-mic-hint">假麦模式（mockMic=1）：可测暂停/主页，不走真实发音评分</p>
+            )}
             <div className="home-cta-row">
               <Link className="text-link" to="/">
                 回首页
