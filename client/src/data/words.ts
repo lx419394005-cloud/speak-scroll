@@ -43,6 +43,11 @@ export const WORDS: WordCard[] = [
   { id: 'souvenir', word: 'souvenir', image: '/words/souvenir.webp' },
 ]
 
+/**
+ * 图片路径约定：同域 `/words/<id>.webp`
+ * - 本地 Vite：读 `client/public/words/`
+ * - 线上：Worker 从 R2 桶 `speak-scroll-words` 读取（key=`words/<id>.webp`）
+ */
 export const BEAST_IDS = [
   'axolotl',
   'pangolin',

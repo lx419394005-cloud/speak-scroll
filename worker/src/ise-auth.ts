@@ -62,9 +62,16 @@ export async function handleHealth(env: Env): Promise<Response> {
   const appId = (env.XFYUN_APP_ID || '').trim()
   const apiKey = (env.XFYUN_API_KEY || '').trim()
   const apiSecret = (env.XFYUN_API_SECRET || '').trim()
+  let wordsBucket = false
+  try {
+    wordsBucket = Boolean(env.WORDS)
+  } catch {
+    wordsBucket = false
+  }
   return json({
     ok: true,
     configured: !isPlaceholder(appId) && !isPlaceholder(apiKey) && !isPlaceholder(apiSecret),
     appIdPrefix: appId.slice(0, 4),
+    wordsR2: wordsBucket,
   })
 }

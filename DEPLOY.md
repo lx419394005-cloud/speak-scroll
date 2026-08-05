@@ -5,6 +5,7 @@
 | 部分 | 说明 |
 |------|------|
 | 前端 | `client/dist` 静态资源（Workers Assets） |
+| 词图 | Cloudflare **R2**（`speak-scroll-words`），经 Worker `GET /words/*.webp` |
 | 讯飞鉴权 | `GET /api/ise-auth`（Secrets） |
 | 排行榜 | `GET/POST /api/leaderboard`（D1） |
 
@@ -63,7 +64,7 @@ npm run deploy:cf
 
 脚本会：创建 D1 → 写 `database_id` → 建表 → 写入讯飞 Secrets → build 前端 → `wrangler deploy`。
 
-词图已压成 WebP。之后日常改代码：`git push` → Actions 自动上线。
+词图源文件在 `client/public/words/`（本地 Vite 仍直接读这里）。上线时同步到 R2，Worker 提供同域 `/words/*.webp`（`Cache-Control: immutable`）。之后日常改代码：`git push` → Actions 自动上线。
 
 ---
 
@@ -111,6 +112,26 @@ npm run db:create
 
 ```bash
 npm run db:remote
+```
+
+---
+
+## 1.5 创建 R2 词图桶并上传
+
+```bash
+cd worker
+npm run r2:create
+cd ..
+npm run words:upload
+```
+
+桶名固定为 `speak-scroll-words`，对象 key 为 `words/<id>.webp`。  
+改词图后重新跑 `npm run words:upload`（`npm run deploy` / `deploy:cf` 也会自动上传）。
+
+本地一体 Worker 调试可先：
+
+```bash
+npm run words:upload:local
 ```
 
 ---
@@ -224,8 +245,8 @@ npm run db:remote --prefix worker
 2. **`/api/ise-auth` 提示密钥未配置**  
    Secrets 未写入或写错环境；用 `npx wrangler secret list` 核对。
 
-3. **打开站点是空白**  
-   先确认 `client/dist` 存在（部署脚本会先 build）。词图在 `client/public/words/`，会打进 dist。
+3. **打开站点是空白 / 词图 404**  
+   先确认 `client/dist` 存在（部署脚本会先 build）。词图应在 R2：跑过 `npm run words:upload`，并确认 `wrangler.jsonc` 绑了 `speak-scroll-words`。本地 Vite 仍用 `client/public/words/`。
 
 4. **麦克风 / 讯飞连不上**  
    必须用 HTTPS（workers.dev 自带）。浏览器允许麦克风；讯飞控制台应用状态正常。
