@@ -3,8 +3,8 @@ import { json, type Env } from './env'
 const WORD_KEY = /^\/words\/((?:[a-z0-9_-]+\/)*[a-z0-9_-]+\.webp)$/i
 
 /**
- * 词图走 R2：同域 `/words/**/*.webp`，长缓存。
- * 桶内 key 形如 `words/axolotl.webp` 或 `words/travel-fun/passport.webp`。
+ * 词图走 R2：同域 /words/.../*.webp，长缓存。
+ * 桶内 key 形如 words/axolotl.webp 或 words/travel-fun/passport.webp。
  * 未命中时回退到 Workers Assets（便于迁移期 / 本地未同步）。
  */
 export async function handleWords(
