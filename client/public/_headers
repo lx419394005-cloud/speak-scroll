@@ -1,7 +1,6 @@
 # Cloudflare Workers static asset headers
-/words/*
-  Cache-Control: public, max-age=31536000, immutable
-  Access-Control-Allow-Origin: *
+# 词图走 R2（Worker），不要给 /words/* 加 Assets 头，
+# 否则 SPA 回退的 HTML 会被 immutable 缓存，图片永久挂掉。
 
 /assets/*
   Cache-Control: public, max-age=31536000, immutable

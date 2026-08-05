@@ -910,7 +910,8 @@ export function Game() {
                     if (retries >= 3) return
                     el.dataset.retry = String(retries + 1)
                     window.setTimeout(() => {
-                      el.src = `${current.image}?r=${retries + 1}`
+                      const join = current.image.includes('?') ? '&' : '?'
+                      el.src = `${current.image}${join}r=${retries + 1}`
                     }, 200 * (retries + 1))
                   }}
                 />
