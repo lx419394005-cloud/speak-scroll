@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { Link } from 'react-router-dom'
 
 const steps = [
-  { title: '选关', body: '首页可选启蒙 / 冲刺 / 怪词三关，词库与时长不同。' },
+  { title: '选关', body: '首页可选奇兽 / 怪果 / 旅途三套主题词库。' },
   { title: '看图', body: '卡片上只有滑稽插画，不显示英文单词。' },
   { title: '说词', body: '对着麦克风大声说完整单词；说完自动评分。' },
   { title: '过关', body: '说对才翻下一张；说错同一张继续，直到说对或时间到。' },

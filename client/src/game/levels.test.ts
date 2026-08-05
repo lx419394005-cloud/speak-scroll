@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { WORDS } from '../data/words'
+import { BEAST_IDS, FRUIT_IDS, VOYAGE_IDS, WORDS } from '../data/words'
 import {
   formatDurationLabel,
   getLevel,
@@ -25,41 +25,46 @@ describe('levels', () => {
     })
   })
 
-  it('defines three ordered levels', () => {
+  it('defines three thematic levels', () => {
     expect(LEVELS).toHaveLength(3)
-    expect(LEVELS.map((l) => l.id)).toEqual(['easy', 'normal', 'hard'])
+    expect(LEVELS.map((l) => l.id)).toEqual(['beasts', 'fruits', 'voyage'])
     expect(LEVELS.map((l) => l.order)).toEqual([1, 2, 3])
   })
 
-  it('isLevelId validates ids', () => {
-    expect(isLevelId('easy')).toBe(true)
-    expect(isLevelId('normal')).toBe(true)
-    expect(isLevelId('hard')).toBe(true)
-    expect(isLevelId('boss')).toBe(false)
+  it('isLevelId validates ids and rejects legacy ids', () => {
+    expect(isLevelId('beasts')).toBe(true)
+    expect(isLevelId('fruits')).toBe(true)
+    expect(isLevelId('voyage')).toBe(true)
+    expect(isLevelId('easy')).toBe(false)
     expect(isLevelId(null)).toBe(false)
   })
 
-  it('getLevel falls back to normal for unknown', () => {
-    expect(getLevel('easy').title).toBe('启蒙')
-    expect(getLevel('normal').durationMs).toBe(60_000)
-    expect(getLevel('hard').passScore).toBeGreaterThan(getLevel('easy').passScore)
+  it('getLevel returns theme packs', () => {
+    expect(getLevel('beasts').title).toBe('奇兽')
+    expect(getLevel('fruits').durationMs).toBe(60_000)
+    expect(getLevel('voyage').passScore).toBeGreaterThan(getLevel('beasts').passScore)
   })
 
-  it('wordsForLevel returns curated pools', () => {
-    const easy = wordsForLevel(getLevel('easy'))
-    const hard = wordsForLevel(getLevel('hard'))
-    const normal = wordsForLevel(getLevel('normal'))
+  it('wordsForLevel returns curated thematic pools', () => {
+    const beasts = wordsForLevel(getLevel('beasts'))
+    const fruits = wordsForLevel(getLevel('fruits'))
+    const voyage = wordsForLevel(getLevel('voyage'))
 
-    expect(easy.length).toBeGreaterThan(0)
-    expect(easy.every((w) => WORDS.some((x) => x.id === w.id))).toBe(true)
-    expect(hard.some((w) => w.id === 'soursop')).toBe(true)
-    expect(normal).toHaveLength(WORDS.length)
+    expect(beasts.map((w) => w.id).sort()).toEqual([...BEAST_IDS].sort())
+    expect(fruits.map((w) => w.id).sort()).toEqual([...FRUIT_IDS].sort())
+    expect(voyage.map((w) => w.id).sort()).toEqual([...VOYAGE_IDS].sort())
+    expect(beasts.every((w) => WORDS.some((x) => x.id === w.id))).toBe(true)
+    expect(fruits.some((w) => w.id === 'soursop')).toBe(true)
+    expect(voyage.some((w) => w.id === 'passport')).toBe(true)
   })
 
-  it('persists selected level id', () => {
-    expect(loadSelectedLevelId()).toBe('normal')
-    saveSelectedLevelId('hard')
-    expect(loadSelectedLevelId()).toBe('hard')
+  it('persists selected level id and maps legacy values', () => {
+    expect(loadSelectedLevelId()).toBe('fruits')
+    saveSelectedLevelId('voyage')
+    expect(loadSelectedLevelId()).toBe('voyage')
+
+    localStorage.setItem('speak-scroll-level', 'easy')
+    expect(loadSelectedLevelId()).toBe('beasts')
   })
 
   it('formatDurationLabel', () => {

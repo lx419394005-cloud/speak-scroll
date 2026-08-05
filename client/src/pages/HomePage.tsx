@@ -15,9 +15,16 @@ export function HomePage() {
   const navigate = useNavigate()
   const [nickname, setNickname] = useState(() => loadNickname())
   const [levelId, setLevelId] = useState<LevelId>(() => loadSelectedLevelId())
-  const [hint, setHint] = useState('选关卡，填昵称，开麦说怪词')
+  const [hint, setHint] = useState('选主题关卡，开麦说怪词')
   const board = loadScoreBoard()
-  const preview = WORDS.slice(0, 6)
+  const preview = [
+    WORDS.find((w) => w.id === 'axolotl'),
+    WORDS.find((w) => w.id === 'durian'),
+    WORDS.find((w) => w.id === 'passport'),
+    WORDS.find((w) => w.id === 'quokka'),
+    WORDS.find((w) => w.id === 'rambutan'),
+    WORDS.find((w) => w.id === 'lighthouse'),
+  ].filter(Boolean) as typeof WORDS
   const selected = LEVELS.find((l) => l.id === levelId) ?? LEVELS[1]!
 
   useEffect(() => {
@@ -48,9 +55,9 @@ export function HomePage() {
   return (
     <main className="page home-page">
       <section className="home-hero">
-        <p className="home-kicker">口播闯关</p>
+        <p className="home-kicker">主题口播闯关</p>
         <h1 className="home-brand">Speak Scroll</h1>
-        <p className="home-lead">看滑稽图，大声说出英文单词。说对才翻下一张。</p>
+        <p className="home-lead">奇兽、怪果、旅途三套词库。看滑稽图，大声说出英文名。</p>
 
         <label className="nick-field home-nick">
           <span>你的昵称</span>

@@ -1,6 +1,12 @@
-import { WORDS, type WordCard } from '../data/words'
+import {
+  BEAST_IDS,
+  FRUIT_IDS,
+  VOYAGE_IDS,
+  WORDS,
+  type WordCard,
+} from '../data/words'
 
-export type LevelId = 'easy' | 'normal' | 'hard'
+export type LevelId = 'beasts' | 'fruits' | 'voyage'
 
 export type LevelConfig = {
   id: LevelId
@@ -17,71 +23,60 @@ export type LevelConfig = {
   wordIds: string[] | null
 }
 
+/**
+ * 主题关卡（抽象题材包，而非难度阶梯）：
+ * - 奇兽：小众动物
+ * - 怪果：冷门水果
+ * - 旅途：旅行场景物件/场所
+ */
 export const LEVELS: LevelConfig[] = [
   {
-    id: 'easy',
+    id: 'beasts',
     order: 1,
-    title: '启蒙',
-    name: '第1关 · 启蒙',
-    blurb: '短词热身，90 秒放宽评分',
+    title: '奇兽',
+    name: '第1关 · 奇兽',
+    blurb: '小众动物图鉴，90 秒乱序说名',
     durationMs: 90_000,
     passScore: 55,
     passAccuracy: 50,
-    wordIds: [
-      'cat',
-      'dog',
-      'pig',
-      'duck',
-      'fish',
-      'cow',
-      'frog',
-      'hat',
-      'bus',
-      'apple',
-      'banana',
-      'cake',
-      'sock',
-      'rope',
-    ],
+    wordIds: [...BEAST_IDS],
   },
   {
-    id: 'normal',
+    id: 'fruits',
     order: 2,
-    title: '冲刺',
-    name: '第2关 · 冲刺',
-    blurb: '经典 1 分钟，全词库乱序',
+    title: '怪果',
+    name: '第2关 · 怪果',
+    blurb: '冷门水果，1 分钟看图喊名',
     durationMs: 60_000,
     passScore: 60,
     passAccuracy: 55,
-    wordIds: null,
+    wordIds: [...FRUIT_IDS],
   },
   {
-    id: 'hard',
+    id: 'voyage',
     order: 3,
-    title: '怪词',
-    name: '第3关 · 怪词',
-    blurb: '难词高压，评分更严',
+    title: '旅途',
+    name: '第3关 · 旅途',
+    blurb: '旅行场景词，节奏更紧、评分更严',
     durationMs: 60_000,
     passScore: 65,
     passAccuracy: 60,
-    wordIds: [
-      'recipe',
-      'receipt',
-      'soursop',
-      'emotion',
-      'pickle',
-      'waffle',
-      'cactus',
-      'sex',
-    ],
+    wordIds: [...VOYAGE_IDS],
   },
 ]
 
 const STORAGE_KEY = 'speak-scroll-level'
-const DEFAULT_LEVEL: LevelId = 'normal'
+const DEFAULT_LEVEL: LevelId = 'fruits'
+
+/** 旧版关卡 id → 新主题 */
+const LEGACY_LEVEL_MAP: Record<string, LevelId> = {
+  easy: 'beasts',
+  normal: 'fruits',
+  hard: 'voyage',
+}
 
 export function isLevelId(value: string | null | undefined): value is LevelId {
-  return value === 'easy' || value === 'normal' || value === 'hard'
+  return value === 'beasts' || value === 'fruits' || value === 'voyage'
 }
 
 export function getLevel(id: LevelId): LevelConfig {
@@ -92,6 +87,7 @@ export function loadSelectedLevelId(): LevelId {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (isLevelId(raw)) return raw
+    if (raw && LEGACY_LEVEL_MAP[raw]) return LEGACY_LEVEL_MAP[raw]!
   } catch {
     /* ignore */
   }

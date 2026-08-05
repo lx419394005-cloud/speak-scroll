@@ -4,30 +4,83 @@ export type WordCard = {
   image: string
 }
 
+/** 主题词库：小众动物 / 怪果 / 旅行场景（可被多关复用） */
 export const WORDS: WordCard[] = [
-  { id: 'banana', word: 'banana', image: '/words/banana.webp' },
-  { id: 'cat', word: 'cat', image: '/words/cat.webp' },
-  { id: 'pig', word: 'pig', image: '/words/pig.webp' },
-  { id: 'duck', word: 'duck', image: '/words/duck.webp' },
-  { id: 'apple', word: 'apple', image: '/words/apple.webp' },
-  { id: 'dog', word: 'dog', image: '/words/dog.webp' },
-  { id: 'fish', word: 'fish', image: '/words/fish.webp' },
-  { id: 'cow', word: 'cow', image: '/words/cow.webp' },
-  { id: 'frog', word: 'frog', image: '/words/frog.webp' },
-  { id: 'hat', word: 'hat', image: '/words/hat.webp' },
-  { id: 'cake', word: 'cake', image: '/words/cake.webp' },
-  { id: 'bus', word: 'bus', image: '/words/bus.webp' },
-  { id: 'sex', word: 'sex', image: '/words/sex.webp' },
-  { id: 'recipe', word: 'recipe', image: '/words/recipe.webp' },
-  { id: 'receipt', word: 'receipt', image: '/words/receipt.webp' },
+  // —— 奇兽 ——
+  { id: 'axolotl', word: 'axolotl', image: '/words/axolotl.webp' },
+  { id: 'pangolin', word: 'pangolin', image: '/words/pangolin.webp' },
+  { id: 'capybara', word: 'capybara', image: '/words/capybara.webp' },
+  { id: 'quokka', word: 'quokka', image: '/words/quokka.webp' },
+  { id: 'platypus', word: 'platypus', image: '/words/platypus.webp' },
+  { id: 'armadillo', word: 'armadillo', image: '/words/armadillo.webp' },
+  { id: 'okapi', word: 'okapi', image: '/words/okapi.webp' },
+  { id: 'wombat', word: 'wombat', image: '/words/wombat.webp' },
+  { id: 'lemur', word: 'lemur', image: '/words/lemur.webp' },
+  { id: 'tapir', word: 'tapir', image: '/words/tapir.webp' },
+
+  // —— 怪果 ——
+  { id: 'durian', word: 'durian', image: '/words/durian.webp' },
+  { id: 'lychee', word: 'lychee', image: '/words/lychee.webp' },
+  { id: 'rambutan', word: 'rambutan', image: '/words/rambutan.webp' },
+  { id: 'persimmon', word: 'persimmon', image: '/words/persimmon.webp' },
+  { id: 'mangosteen', word: 'mangosteen', image: '/words/mangosteen.webp' },
+  { id: 'kumquat', word: 'kumquat', image: '/words/kumquat.webp' },
+  { id: 'jackfruit', word: 'jackfruit', image: '/words/jackfruit.webp' },
   { id: 'soursop', word: 'soursop', image: '/words/soursop.webp' },
-  { id: 'rope', word: 'rope', image: '/words/rope.webp' },
-  { id: 'emotion', word: 'emotion', image: '/words/emotion.webp' },
-  { id: 'pickle', word: 'pickle', image: '/words/pickle.webp' },
-  { id: 'waffle', word: 'waffle', image: '/words/waffle.webp' },
-  { id: 'cactus', word: 'cactus', image: '/words/cactus.webp' },
-  { id: 'sock', word: 'sock', image: '/words/sock.webp' },
+  { id: 'guava', word: 'guava', image: '/words/guava.webp' },
+  { id: 'longan', word: 'longan', image: '/words/longan.webp' },
+
+  // —— 旅途 ——
+  { id: 'passport', word: 'passport', image: '/words/passport.webp' },
+  { id: 'suitcase', word: 'suitcase', image: '/words/suitcase.webp' },
+  { id: 'hostel', word: 'hostel', image: '/words/hostel.webp' },
+  { id: 'compass', word: 'compass', image: '/words/compass.webp' },
+  { id: 'ferry', word: 'ferry', image: '/words/ferry.webp' },
+  { id: 'backpack', word: 'backpack', image: '/words/backpack.webp' },
+  { id: 'postcard', word: 'postcard', image: '/words/postcard.webp' },
+  { id: 'lighthouse', word: 'lighthouse', image: '/words/lighthouse.webp' },
+  { id: 'tram', word: 'tram', image: '/words/tram.webp' },
+  { id: 'souvenir', word: 'souvenir', image: '/words/souvenir.webp' },
 ]
+
+export const BEAST_IDS = [
+  'axolotl',
+  'pangolin',
+  'capybara',
+  'quokka',
+  'platypus',
+  'armadillo',
+  'okapi',
+  'wombat',
+  'lemur',
+  'tapir',
+] as const
+
+export const FRUIT_IDS = [
+  'durian',
+  'lychee',
+  'rambutan',
+  'persimmon',
+  'mangosteen',
+  'kumquat',
+  'jackfruit',
+  'soursop',
+  'guava',
+  'longan',
+] as const
+
+export const VOYAGE_IDS = [
+  'passport',
+  'suitcase',
+  'hostel',
+  'compass',
+  'ferry',
+  'backpack',
+  'postcard',
+  'lighthouse',
+  'tram',
+  'souvenir',
+] as const
 
 /** 总分门槛 */
 export const PASS_SCORE = 60
